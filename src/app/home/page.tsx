@@ -12,6 +12,7 @@ const Home: React.FC = () => {
   const peerRef = useRef<RTCPeerConnection | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+  const localStreamRef = useRef<MediaStream | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -24,7 +25,7 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     if (username) {
-      socketRef.current = new WebSocket("https://video-chat2-4v77.onrender.com");
+      socketRef.current = new WebSocket("wss://video-chat2-4v77.onrender.com");
 
       socketRef.current.onmessage = async (message: MessageEvent) => {
         const data = JSON.parse(message.data);
@@ -53,7 +54,23 @@ const Home: React.FC = () => {
     }
   }, [username]);
 
+  const getMediaStream = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+      localStreamRef.current = stream;
+      if (videoRef.current) videoRef.current.srcObject = stream;
+      return stream;
+    } catch (error) {
+      console.error("Error accessing camera/microphone:", error);
+      setStatusMessage("Camera access denied. Please allow camera and refresh.");
+      return null;
+    }
+  };
+
   const startCall = async (partner: string) => {
+    const stream = await getMediaStream();
+    if (!stream) return;
+
     peerRef.current = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     peerRef.current.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
@@ -65,11 +82,9 @@ const Home: React.FC = () => {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
     };
-    
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
     stream.getTracks().forEach((track) => peerRef.current!.addTrack(track, stream));
-    if (videoRef.current) videoRef.current.srcObject = stream;
-    
+
     const offer = await peerRef.current.createOffer();
     await peerRef.current.setLocalDescription(offer);
     if (socketRef.current) {
@@ -78,6 +93,9 @@ const Home: React.FC = () => {
   };
 
   const handleOffer = async (offer: RTCSessionDescriptionInit, from: string) => {
+    const stream = await getMediaStream();
+    if (!stream) return;
+
     peerRef.current = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
     peerRef.current.onicecandidate = (event) => {
       if (event.candidate && socketRef.current) {
@@ -89,11 +107,9 @@ const Home: React.FC = () => {
         remoteVideoRef.current.srcObject = event.streams[0];
       }
     };
-    
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+
     stream.getTracks().forEach((track) => peerRef.current!.addTrack(track, stream));
-    if (videoRef.current) videoRef.current.srcObject = stream;
-    
+
     await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await peerRef.current.createAnswer();
     await peerRef.current.setLocalDescription(answer);
@@ -108,11 +124,12 @@ const Home: React.FC = () => {
     }
   };
 
-  const toggleGoLive = () => {
+  const toggleGoLive = async () => {
     setIsLive((prev) => !prev);
     if (socketRef.current && username) {
       socketRef.current.send(JSON.stringify({ type: "go-live", username }));
       setStatusMessage("Waiting for connection...");
+      await getMediaStream(); // Ensure media is available before a call starts
     }
   };
 
