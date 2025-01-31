@@ -7,18 +7,16 @@ import { auth } from "../firebaseConfig";
 const Home: React.FC = () => {
   const [username, setUsername] = useState<string | null>(null);
   const [isLive, setIsLive] = useState(false);
-  const [peerUsername, setPeerUsername] = useState<string | null>(null);
-  const [noUsersAvailable, setNoUsersAvailable] = useState(false);
+  const [statusMessage, setStatusMessage] = useState("Waiting for connection...");
   const socketRef = useRef<WebSocket | null>(null);
-  const peerConnection = useRef<RTCPeerConnection | null>(null);
+  const peerRef = useRef<RTCPeerConnection | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUsername(user.email?.split("@")[0] || "");
-      } else {
-        setUsername(null);
       }
     });
     return () => unsubscribe();
@@ -26,103 +24,110 @@ const Home: React.FC = () => {
 
   useEffect(() => {
     if (username) {
-      socketRef.current = new WebSocket("ws://localhost:3001");
+      socketRef.current = new WebSocket("https://video-chat2-4v77.onrender.com");
 
       socketRef.current.onmessage = async (message: MessageEvent) => {
         const data = JSON.parse(message.data);
-
         switch (data.type) {
-          case "pair":
-            setPeerUsername(data.peer);
-            await startCall();
-            break;
-          case "no-users":
-            setNoUsersAvailable(true);
+          case "connect-peer":
+            await startCall(data.username);
             break;
           case "offer":
             await handleOffer(data.offer, data.from);
             break;
           case "answer":
-            await peerConnection.current?.setRemoteDescription(new RTCSessionDescription(data.answer));
+            await handleAnswer(data.answer);
             break;
           case "ice-candidate":
-            await peerConnection.current?.addIceCandidate(new RTCIceCandidate(data.candidate));
+            if (peerRef.current) {
+              await peerRef.current.addIceCandidate(new RTCIceCandidate(data.candidate));
+            }
+            break;
+          case "no-user-available":
+            setStatusMessage("No users available.");
             break;
           default:
             console.log("Unknown message type:", data);
         }
       };
-
-      return () => {
-        socketRef.current?.close();
-      };
     }
   }, [username]);
 
-  useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-      if (videoRef.current) videoRef.current.srcObject = stream;
-    });
-  }, []);
-
-  const startCall = async () => {
-    peerConnection.current = new RTCPeerConnection();
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current?.send(JSON.stringify({
-          type: "ice-candidate",
-          target: peerUsername,
-          candidate: event.candidate,
-        }));
+  const startCall = async (partner: string) => {
+    peerRef.current = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    peerRef.current.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.send(JSON.stringify({ type: "ice-candidate", candidate: event.candidate, target: partner }));
       }
     };
-
+    peerRef.current.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+    
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
-
-    const offer = await peerConnection.current.createOffer();
-    await peerConnection.current.setLocalDescription(offer);
-
-    socketRef.current?.send(JSON.stringify({ type: "offer", target: peerUsername, offer }));
+    stream.getTracks().forEach((track) => peerRef.current!.addTrack(track, stream));
+    if (videoRef.current) videoRef.current.srcObject = stream;
+    
+    const offer = await peerRef.current.createOffer();
+    await peerRef.current.setLocalDescription(offer);
+    if (socketRef.current) {
+      socketRef.current.send(JSON.stringify({ type: "offer", offer, target: partner }));
+    }
   };
 
   const handleOffer = async (offer: RTCSessionDescriptionInit, from: string) => {
-    setPeerUsername(from);
-    peerConnection.current = new RTCPeerConnection();
-    peerConnection.current.onicecandidate = (event) => {
-      if (event.candidate) {
-        socketRef.current?.send(JSON.stringify({
-          type: "ice-candidate",
-          target: from,
-          candidate: event.candidate,
-        }));
+    peerRef.current = new RTCPeerConnection({ iceServers: [{ urls: "stun:stun.l.google.com:19302" }] });
+    peerRef.current.onicecandidate = (event) => {
+      if (event.candidate && socketRef.current) {
+        socketRef.current.send(JSON.stringify({ type: "ice-candidate", candidate: event.candidate, target: from }));
       }
     };
-
+    peerRef.current.ontrack = (event) => {
+      if (remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = event.streams[0];
+      }
+    };
+    
     const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-    stream.getTracks().forEach((track) => peerConnection.current?.addTrack(track, stream));
-
-    await peerConnection.current.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.current.createAnswer();
-    await peerConnection.current.setLocalDescription(answer);
-
-    socketRef.current?.send(JSON.stringify({ type: "answer", target: from, answer }));
+    stream.getTracks().forEach((track) => peerRef.current!.addTrack(track, stream));
+    if (videoRef.current) videoRef.current.srcObject = stream;
+    
+    await peerRef.current.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await peerRef.current.createAnswer();
+    await peerRef.current.setLocalDescription(answer);
+    if (socketRef.current) {
+      socketRef.current.send(JSON.stringify({ type: "answer", answer, target: from }));
+    }
   };
 
-  const goLive = () => {
-    setIsLive(true);
-    setNoUsersAvailable(false);
-    socketRef.current?.send(JSON.stringify({ type: "go-live", username }));
+  const handleAnswer = async (answer: RTCSessionDescriptionInit) => {
+    if (peerRef.current) {
+      await peerRef.current.setRemoteDescription(new RTCSessionDescription(answer));
+    }
+  };
+
+  const toggleGoLive = () => {
+    setIsLive((prev) => !prev);
+    if (socketRef.current && username) {
+      socketRef.current.send(JSON.stringify({ type: "go-live", username }));
+      setStatusMessage("Waiting for connection...");
+    }
   };
 
   return (
     <div>
-      <h1>P2P Video Chat</h1>
+      <h1>Video Chat</h1>
       {username ? <p>Username: {username}</p> : <p>Loading...</p>}
-      <button onClick={goLive} disabled={isLive}>{isLive ? "Waiting for Connection..." : "Go Live"}</button>
-      {noUsersAvailable && <p>No users available</p>}
-      {peerUsername && <p>Connected to: {peerUsername}</p>}
-      <video ref={videoRef} autoPlay playsInline muted style={{ width: "300px", backgroundColor: "black" }}></video>
+      <button onClick={toggleGoLive} style={{ backgroundColor: isLive ? "green" : "gray" }}>
+        {isLive ? "Go Live (Active)" : "Go Live"}
+      </button>
+      <p>{statusMessage}</p>
+      <div style={{ display: "flex", gap: "10px" }}>
+        <video ref={videoRef} autoPlay muted style={{ width: "300px", height: "300px", backgroundColor: "black" }}></video>
+        <video ref={remoteVideoRef} autoPlay style={{ width: "300px", height: "300px", backgroundColor: "black" }}></video>
+      </div>
     </div>
   );
 };
