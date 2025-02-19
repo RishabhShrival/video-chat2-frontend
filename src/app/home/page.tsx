@@ -15,6 +15,12 @@ const Home: React.FC = () => {
   const localStreamRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
+    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+        if (localStreamRef.current) {
+            localStreamRef.current.srcObject = stream;
+        }
+    });
+
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
         setUsername(user.email?.split("@")[0] || "");
