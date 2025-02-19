@@ -15,34 +15,40 @@ const Home: React.FC = () => {
   const localStreamRef = useRef<HTMLVideoElement | null>(null);
 
 
-  useEffect(() => {
-    if (remoteVideoRef.current) {
-        remoteVideoRef.current.load(); // Forces video element to refresh
-        console.log("🔄 Remote video reloaded");
-    }
+    useEffect(() => {
+        if (remoteVideoRef.current) {
+            remoteVideoRef.current.load(); // Forces video element to refresh
+            console.log("🔄 Remote video reloaded");
+        }
     }, [remoteVideoRef.current?.srcObject]); // Run when the stream changes
 
-  useEffect(() => {
-    navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-        if (localStreamRef.current) {
-            localStreamRef.current.srcObject = stream;
-        }
+    useEffect(() => {
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
+            if (localStreamRef.current) {
+                localStreamRef.current.srcObject = stream;
+            }
     });
 
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      if (user) {
-        setUsername(user.email?.split("@")[0] || "");
-        socket.connect();
-        socket.emit("register", user.uid);
-      }
-    });
-    return () => unsubscribe();
-  }, []);
+        if (user) {
+            setUsername(user.email?.split("@")[0] || "");
+            socket.connect();
+            socket.emit("register", user.uid);
+        }
+        });
+        return () => unsubscribe();
+    }, []);
 
-  useEffect(() => {
-    socket.on("user-list", (userList: string[]) => {
-      setUsers(userList.filter((id) => id !== username));
+    useEffect(() => {
+        socket.on("user-list", (userList: string[]) => {
+        setUsers(userList.filter((id) => id !== username));
     });
+
+    useEffect(() => {
+        if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
+            remoteVideoRef.current.play().catch((e) => console.error("Play failed:", e));
+        }
+    }, [remoteVideoRef.current?.srcObject]);
 
     socket.on("incoming-call", async ({ from, offer }) => {
         const peer = createPeerConnection(from);
@@ -82,19 +88,16 @@ const Home: React.FC = () => {
         peer.ontrack = (event) => {
             console.log("🚀 Remote track received:", event.streams);
 
-            if (event.streams.length > 0) {
+            if (event.streams.length > 0 && remoteVideoRef.current) {
                 const remoteStream = event.streams[0];
 
-                if (remoteVideoRef.current) {
+                if (!remoteVideoRef.current.srcObject) {  // Prevent overwriting
                     remoteVideoRef.current.srcObject = remoteStream;
-                    console.log("✅ Remote video set:", remoteVideoRef.current.srcObject);
-                } else {
-                    console.error("❌ remoteVideoRef is null");
+                    console.log("✅ Remote video set:", remoteStream);
                 }
-            } else {
-                console.error("❌ No streams received in ontrack");
             }
         };
+
 
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
             if (localStreamRef.current) {
@@ -149,6 +152,7 @@ const Home: React.FC = () => {
                         visibility: "visible",
                     }} 
                 />
+                <button onClick={() => remoteVideoRef.current?.play()}>Play Remote Video</button>
             </div>
         </div>
     );
