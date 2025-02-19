@@ -137,7 +137,18 @@ const Home: React.FC = () => {
             </ul>
             <div>
                 <video ref={localStreamRef} autoPlay playsInline muted />
-                <video ref={remoteVideoRef} autoPlay playsInline />
+                <video 
+                    ref={remoteVideoRef} 
+                    autoPlay 
+                    playsInline 
+                    style={{
+                        width: "400px", 
+                        height: "300px", 
+                        backgroundColor: "black",
+                        display: "block", // Ensure it's not hidden
+                        visibility: "visible",
+                    }} 
+                />
             </div>
         </div>
     );
