@@ -5,44 +5,51 @@ import { onAuthStateChanged } from "firebase/auth";
 import { auth } from "../firebaseConfig";
 import { socket } from "@/app/socket";
 
-const peerConnections: Record<string, RTCPeerConnection> = {}; // Store peer connections
-
 const Home: React.FC = () => {
-  const [username, setUsername] = useState<string | null>(null);
-  const [users, setUsers] = useState<string[]>([]);
-  const [isLive, setIsLive] = useState(false);
-  const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-  const localStreamRef = useRef<HTMLVideoElement | null>(null);
-
-
-    useEffect(() => {
-        if (remoteVideoRef.current) {
-            remoteVideoRef.current.load(); // Forces video element to refresh
-            console.log("🔄 Remote video reloaded");
-        }
-    }, [remoteVideoRef.current?.srcObject]); // Run when the stream changes
+    const [username, setUsername] = useState<string | null>(null);
+    const [users, setUsers] = useState<string[]>([]);
+    const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
+    const localStreamRef = useRef<HTMLVideoElement | null>(null);
+    const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
 
     useEffect(() => {
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-            if (localStreamRef.current) {
-                localStreamRef.current.srcObject = stream;
+        const getUserMedia = async () => {
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                if (localStreamRef.current) {
+                    localStreamRef.current.srcObject = stream;
+                }
+            } catch (error) {
+                console.error("Error accessing media devices:", error);
             }
-    });
+        };
 
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-        if (user) {
-            setUsername(user.email?.split("@")[0] || "");
-            socket.connect();
-            socket.emit("register", user.uid);
-        }
+        getUserMedia();
+
+        const unsubscribe = onAuthStateChanged(auth, (user) => {
+            if (user) {
+                setUsername(user.email?.split("@")[0] || "");
+                socket.connect();
+                socket.emit("register", user.uid);
+            }
         });
-        return () => unsubscribe();
+
+        return () => {
+            unsubscribe();
+        };
     }, []);
 
     useEffect(() => {
-        socket.on("user-list", (userList: string[]) => {
-        setUsers(userList.filter((id) => id !== username));
-    });
+        const handleUserList = (userList: string[]) => {
+            setUsers(userList.filter((id) => id !== username));
+        };
+
+        socket.on("user-list", handleUserList);
+
+        return () => {
+            socket.off("user-list", handleUserList);
+        };
+    }, [username]);
 
     useEffect(() => {
         if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
@@ -50,31 +57,37 @@ const Home: React.FC = () => {
         }
     }, [remoteVideoRef.current?.srcObject]);
 
-    socket.on("incoming-call", async ({ from, offer }) => {
-        const peer = createPeerConnection(from);
-        await peer.setRemoteDescription(new RTCSessionDescription(offer));
+    useEffect(() => {
+        const handleIncomingCall = async ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
+            const peer = createPeerConnection(from);
+            await peer.setRemoteDescription(new RTCSessionDescription(offer));
 
-        const answer = await peer.createAnswer();
-        await peer.setLocalDescription(answer);
+            const answer = await peer.createAnswer();
+            await peer.setLocalDescription(answer);
 
-        socket.emit("answer-call", { to: from, answer });
-    });
+            socket.emit("answer-call", { to: from, answer });
+        };
 
-    socket.on("call-answered", async ({ from, answer }) => {
-        await peerConnections[from]?.setRemoteDescription(new RTCSessionDescription(answer));
-    });
+        const handleCallAnswered = async ({ from, answer }: { from: string; answer: RTCSessionDescriptionInit }) => {
+            await peerConnections.current[from]?.setRemoteDescription(new RTCSessionDescription(answer));
+        };
 
-    socket.on("ice-candidate", ({ from, candidate }) => {
-        peerConnections[from]?.addIceCandidate(new RTCIceCandidate(candidate));
-    });
+        const handleIceCandidate = ({ from, candidate }: { from: string; candidate: RTCIceCandidateInit }) => {
+            peerConnections.current[from]?.addIceCandidate(new RTCIceCandidate(candidate));
+        };
 
-    return () => {
-    socket.off("user-list"); // Unsubscribes from the event but keeps the socket connected
-};
+        socket.on("incoming-call", handleIncomingCall);
+        socket.on("call-answered", handleCallAnswered);
+        socket.on("ice-candidate", handleIceCandidate);
 
-  }, [username]);
+        return () => {
+            socket.off("incoming-call", handleIncomingCall);
+            socket.off("call-answered", handleCallAnswered);
+            socket.off("ice-candidate", handleIceCandidate);
+        };
+    }, []);
 
-  const createPeerConnection = (peerId: string) => {
+    const createPeerConnection = (peerId: string) => {
         const peer = new RTCPeerConnection({
             iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
         });
@@ -87,26 +100,21 @@ const Home: React.FC = () => {
 
         peer.ontrack = (event) => {
             console.log("🚀 Remote track received:", event.streams);
-
             if (event.streams.length > 0 && remoteVideoRef.current) {
                 const remoteStream = event.streams[0];
 
-                if (!remoteVideoRef.current.srcObject) {  // Prevent overwriting
+                if (!remoteVideoRef.current.srcObject) {
                     remoteVideoRef.current.srcObject = remoteStream;
                     console.log("✅ Remote video set:", remoteStream);
                 }
             }
         };
 
-
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-            if (localStreamRef.current) {
-                localStreamRef.current.srcObject = stream;
-            }
             stream.getTracks().forEach((track) => peer.addTrack(track, stream));
         });
 
-        peerConnections[peerId] = peer;
+        peerConnections.current[peerId] = peer;
         return peer;
     };
 
@@ -127,7 +135,6 @@ const Home: React.FC = () => {
         socket.emit("call-user", { to: peerId, offer });
     };
 
-
     return (
         <div>
             <h1>Online Users</h1>
@@ -140,23 +147,22 @@ const Home: React.FC = () => {
             </ul>
             <div>
                 <video ref={localStreamRef} autoPlay playsInline muted />
-                <video 
-                    ref={remoteVideoRef} 
-                    autoPlay 
-                    playsInline 
+                <video
+                    ref={remoteVideoRef}
+                    autoPlay
+                    playsInline
                     style={{
-                        width: "400px", 
-                        height: "300px", 
+                        width: "400px",
+                        height: "300px",
                         backgroundColor: "black",
-                        display: "block", // Ensure it's not hidden
+                        display: "block",
                         visibility: "visible",
-                    }} 
+                    }}
                 />
                 <button onClick={() => remoteVideoRef.current?.play()}>Play Remote Video</button>
             </div>
         </div>
     );
-
 };
 
 export default Home;
