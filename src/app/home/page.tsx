@@ -84,13 +84,14 @@ const Home: React.FC = () => {
         peerConnections[peerId] = peer;
         return peer;
     };
-    
+
     const callUser = async (peerId: string) => {
         const peer = createPeerConnection(peerId);
         const stream = localStreamRef.current?.srcObject as MediaStream;
 
         if (stream) {
             stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+            console.log("📞 Calling user");
         } else {
             console.error("❌ No local stream found before calling.");
         }
