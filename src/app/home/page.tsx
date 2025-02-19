@@ -48,9 +48,9 @@ const Home: React.FC = () => {
         peerConnections[from]?.addIceCandidate(new RTCIceCandidate(candidate));
     });
 
-    return () => {
-        socket.disconnect();
-    };
+    // return () => {
+    //     socket.disconnect();
+    // };
 
   }, [username]);
 
