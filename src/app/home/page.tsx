@@ -14,6 +14,14 @@ const Home: React.FC = () => {
   const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
   const localStreamRef = useRef<HTMLVideoElement | null>(null);
 
+
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+        remoteVideoRef.current.load(); // Forces video element to refresh
+        console.log("🔄 Remote video reloaded");
+    }
+    }, [remoteVideoRef.current?.srcObject]); // Run when the stream changes
+
   useEffect(() => {
     navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
         if (localStreamRef.current) {
@@ -72,11 +80,19 @@ const Home: React.FC = () => {
         };
 
         peer.ontrack = (event) => {
-            console.log("🎥 Remote stream found");
-            if (event.streams.length > 0 && remoteVideoRef.current) {
-                remoteVideoRef.current.srcObject = event.streams[0];
+            console.log("🚀 Remote track received:", event.streams);
+
+            if (event.streams.length > 0) {
+                const remoteStream = event.streams[0];
+
+                if (remoteVideoRef.current) {
+                    remoteVideoRef.current.srcObject = remoteStream;
+                    console.log("✅ Remote video set:", remoteVideoRef.current.srcObject);
+                } else {
+                    console.error("❌ remoteVideoRef is null");
+                }
             } else {
-                console.error("❌ No remote streams found");
+                console.error("❌ No streams received in ontrack");
             }
         };
 
