@@ -3,13 +3,13 @@ import { getAuth } from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfigu = {
-  apiKey: "AIzaSyB-lh_VYhkOksmr_4PeaeLv2qE75Sr1AU0",
-  authDomain: "video-chat-aa104.firebaseapp.com",
-  projectId: "video-chat-aa104",
-  storageBucket: "video-chat-aa104.firebasestorage.app",
-  messagingSenderId: "941197649827",
-  appId: "1:941197649827:web:b5469a8154df2d2c9d9c16",
-  measurementId: "G-3M4S6RW4G6"
+  apiKey: process.env.NEXT_PUBLIC_FIREBASE_API_KEY,
+  authDomain: process.env.NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN,
+  projectId: process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID,
+  storageBucket: process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: process.env.NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID,
+  appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
+  measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID
 };
 
 // Initialize Firebase

@@ -11,7 +11,8 @@ const Login: React.FC = () => {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const router = useRouter();
-
+  console.log("111");
+  
   const handleSignUp = async () => {
     try {
       // Create a dummy email from the username
