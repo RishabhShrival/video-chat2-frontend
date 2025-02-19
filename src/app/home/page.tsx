@@ -48,9 +48,9 @@ const Home: React.FC = () => {
         peerConnections[from]?.addIceCandidate(new RTCIceCandidate(candidate));
     });
 
-    // return () => {
-    //     socket.disconnect();
-    // };
+    return () => {
+    socket.off("user-list"); // Unsubscribes from the event but keeps the socket connected
+};
 
   }, [username]);
 
@@ -66,8 +66,11 @@ const Home: React.FC = () => {
         };
 
         peer.ontrack = (event) => {
-            if (remoteVideoRef.current) {
+            console.log("🎥 Remote stream found");
+            if (event.streams.length > 0 && remoteVideoRef.current) {
                 remoteVideoRef.current.srcObject = event.streams[0];
+            } else {
+                console.error("❌ No remote streams found");
             }
         };
 
@@ -81,13 +84,23 @@ const Home: React.FC = () => {
         peerConnections[peerId] = peer;
         return peer;
     };
+    
     const callUser = async (peerId: string) => {
         const peer = createPeerConnection(peerId);
+        const stream = localStreamRef.current?.srcObject as MediaStream;
+
+        if (stream) {
+            stream.getTracks().forEach((track) => peer.addTrack(track, stream));
+        } else {
+            console.error("❌ No local stream found before calling.");
+        }
+
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
 
         socket.emit("call-user", { to: peerId, offer });
     };
+
 
     return (
         <div>
