@@ -103,7 +103,7 @@ const Home: React.FC = () => {
             if (event.streams.length > 0 && remoteVideoRef.current) {
                 const remoteStream = event.streams[0];
 
-                if (!remoteVideoRef.current.srcObject) {
+                if (remoteVideoRef.current.srcObject) {
                     remoteVideoRef.current.srcObject = remoteStream;
                     console.log("✅ Remote video set:", remoteStream);
                 }
@@ -132,6 +132,7 @@ const Home: React.FC = () => {
         const offer = await peer.createOffer();
         await peer.setLocalDescription(offer);
 
+        console.log("📞 Sending offer to user");
         socket.emit("call-user", { to: peerId, offer });
     };
 
@@ -150,6 +151,7 @@ const Home: React.FC = () => {
                     ref={localStreamRef} 
                     autoPlay 
                     playsInline 
+                    muted
                     style={{
                         width: "400px",
                         height: "300px",
