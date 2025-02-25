@@ -1,178 +1,102 @@
 "use client";
 
-import { useEffect, useState, useRef } from "react";
-import { onAuthStateChanged } from "firebase/auth";
-import { auth } from "../firebaseConfig";
-import { socket } from "@/app/socket";
+import { useEffect, useRef, useState } from "react";
+import { io } from "socket.io-client";
+import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-peer";
 
-const Home: React.FC = () => {
-    const [username, setUsername] = useState<string | null>(null);
-    const [users, setUsers] = useState<string[]>([]);
-    const remoteVideoRef = useRef<HTMLVideoElement | null>(null);
-    const localStreamRef = useRef<HTMLVideoElement | null>(null);
-    const peerConnections = useRef<Record<string, RTCPeerConnection>>({});
+const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL ,{autoConnect: true});
 
-    useEffect(() => {
-        const getUserMedia = async () => {
-            try {
-                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                if (localStreamRef.current) {
-                    localStreamRef.current.srcObject = stream;
-                }
-            } catch (error) {
-                console.error("Error accessing media devices:", error);
-            }
-        };
+export default function VideoChat() {
+  const [users, setUsers] = useState<string[]>([]);
+  const [myId, setMyId] = useState<string | null>(null);
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement | null>(null);
+  const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({});
+  const localStreamRef = useRef<MediaStream | null>(null);
 
-        getUserMedia();
-
-        const unsubscribe = onAuthStateChanged(auth, (user) => {
-            if (user) {
-                setUsername(user.email?.split("@")[0] || "");
-                socket.connect();
-                socket.emit("register", user.uid);
-            }
-        });
-
-        return () => {
-            unsubscribe();
-        };
-    }, []);
-
-    useEffect(() => {
-        const handleUserList = (userList: string[]) => {
-            setUsers(userList.filter((id) => id !== username));
-        };
-
-        socket.on("user-list", handleUserList);
-
-        return () => {
-            socket.off("user-list", handleUserList);
-        };
-    }, [username]);
-
-    useEffect(() => {
-        if (remoteVideoRef.current && remoteVideoRef.current.srcObject) {
-            remoteVideoRef.current.play().catch((e) => console.error("Play failed:", e));
+  useEffect(() => {
+    // Get user media
+    navigator.mediaDevices
+      .getUserMedia({ video: true, audio: true })
+      .then((stream) => {
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
         }
-    }, [remoteVideoRef.current?.srcObject]);
+      })
+      .catch((err) => console.error("Media access error:", err));
 
-    useEffect(() => {
-        const handleIncomingCall = async ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
-            const peer = createPeerConnection(from);
-            await peer.setRemoteDescription(new RTCSessionDescription(offer));
+    // Handle socket connection
+    socket.on("connect", () => {
+      if (socket.id) {
+        setMyId(socket.id);
+      }
+    });
 
-            const answer = await peer.createAnswer();
-            await peer.setLocalDescription(answer);
+    // Update user list
+    socket.on("user-list", (userList: string[]) => {
+      setUsers(userList.filter((id) => id !== socket.id));
+    });
 
-            socket.emit("answer-call", { to: from, answer });
-        };
+    // Handle incoming signals
+    socket.on("signal", ({ from, signal }: { from: string; signal: SignalData }) => {
+      if (!peersRef.current[from]) {
+        const peer = createPeer(false, from);
+        peersRef.current[from] = peer;
+      }
+      peersRef.current[from].signal(signal);
+    });
 
-        const handleCallAnswered = async ({ from, answer }: { from: string; answer: RTCSessionDescriptionInit }) => {
-            await peerConnections.current[from]?.setRemoteDescription(new RTCSessionDescription(answer));
-        };
-
-        const handleIceCandidate = ({ from, candidate }: { from: string; candidate: RTCIceCandidateInit }) => {
-            peerConnections.current[from]?.addIceCandidate(new RTCIceCandidate(candidate));
-        };
-
-        socket.on("incoming-call", handleIncomingCall);
-        socket.on("call-answered", handleCallAnswered);
-        socket.on("ice-candidate", handleIceCandidate);
-
-        return () => {
-            socket.off("incoming-call", handleIncomingCall);
-            socket.off("call-answered", handleCallAnswered);
-            socket.off("ice-candidate", handleIceCandidate);
-        };
-    }, []);
-
-    const createPeerConnection = (peerId: string) => {
-        const peer = new RTCPeerConnection({
-            iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
-        });
-
-        peer.onicecandidate = (event) => {
-            if (event.candidate) {
-                socket.emit("ice-candidate", { to: peerId, candidate: event.candidate });
-            }
-        };
-
-        peer.ontrack = (event) => {
-            console.log("🚀 Remote track received:", event.streams);
-            if (event.streams.length > 0 && remoteVideoRef.current) {
-                const remoteStream = event.streams[0];
-                remoteVideoRef.current.srcObject = remoteStream;
-                console.log("✅ Remote video set:", remoteStream);
-                
-            }
-        };
-
-        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then((stream) => {
-            stream.getTracks().forEach((track) => peer.addTrack(track, stream));
-        });
-
-        peerConnections.current[peerId] = peer;
-        return peer;
+    return () => {
+      socket.off("connect");
+      socket.off("user-list");
+      socket.off("signal");
     };
+  }, []);
 
-    const callUser = async (peerId: string) => {
-        const peer = createPeerConnection(peerId);
-        const stream = localStreamRef.current?.srcObject as MediaStream;
+  const createPeer = (initiator: boolean, peerId: string) => {
+    const peer = new SimplePeer({ initiator, stream: localStreamRef.current ?? undefined, trickle: false });
 
-        if (stream) {
-            stream.getTracks().forEach((track) => peer.addTrack(track, stream));
-            console.log("📞 Calling user");
-        } else {
-            console.error("❌ No local stream found before calling.");
-        }
+    peer.on("signal", (data: SignalData) => {
+      socket.emit("signal", { to: peerId, signal: data });
+    });
 
-        const offer = await peer.createOffer();
-        await peer.setLocalDescription(offer);
+    peer.on("stream", (remoteStream: MediaStream) => {
+      addRemoteStream(peerId, remoteStream);
+    });
 
-        console.log("📞 Sending offer to user");
-        socket.emit("call-user", { to: peerId, offer });
-    };
+    return peer;
+  };
 
-    return (
-        <div>
-            <h1>Online Users</h1>
-            <ul>
-                {users.map((user) => (
-                    <li key={user}>
-                        {user} <button onClick={() => callUser(user)}>Call</button>
-                    </li>
-                ))}
-            </ul>
-            <div>
-                <video 
-                    ref={localStreamRef} 
-                    autoPlay 
-                    playsInline 
-                    muted
-                    style={{
-                        width: "400px",
-                        height: "300px",
-                        backgroundColor: "black",
-                        display: "block",
-                        visibility: "visible",
-                    }}  />
-                <video
-                    ref={remoteVideoRef}
-                    autoPlay
-                    playsInline
-                    style={{
-                        width: "400px",
-                        height: "300px",
-                        backgroundColor: "black",
-                        display: "block",
-                        visibility: "visible",
-                    }}
-                />
-                <button onClick={() => remoteVideoRef.current?.play()}>Play Remote Video</button>
-            </div>
-        </div>
-    );
-};
+  const startCall = (peerId: string) => {
+    const peer = createPeer(true, peerId);
+    peersRef.current[peerId] = peer;
+  };
 
-export default Home;
+  const addRemoteStream = (peerId: string, stream: MediaStream) => {
+    if (!document.getElementById(peerId) && videoContainerRef.current) {
+      const remoteVideo = document.createElement("video");
+      remoteVideo.id = peerId;
+      remoteVideo.srcObject = stream;
+      remoteVideo.autoplay = true;
+      videoContainerRef.current.appendChild(remoteVideo);
+    }
+  };
+
+  return (
+    <div>
+      <h1>Multi-User Video Chat</h1>
+      <div ref={videoContainerRef}>
+        <video ref={localVideoRef} autoPlay muted />
+      </div>
+      <h2>Connected Users:</h2>
+      <ul>
+        {users.map((user) => (
+          <li key={user}>
+            {user} <button onClick={() => startCall(user)}>Call</button>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
