@@ -102,11 +102,9 @@ const Home: React.FC = () => {
             console.log("🚀 Remote track received:", event.streams);
             if (event.streams.length > 0 && remoteVideoRef.current) {
                 const remoteStream = event.streams[0];
-
-                if (remoteVideoRef.current.srcObject) {
-                    remoteVideoRef.current.srcObject = remoteStream;
-                    console.log("✅ Remote video set:", remoteStream);
-                }
+                remoteVideoRef.current.srcObject = remoteStream;
+                console.log("✅ Remote video set:", remoteStream);
+                
             }
         };
 
