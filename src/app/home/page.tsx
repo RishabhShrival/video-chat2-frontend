@@ -147,8 +147,8 @@ export default function VideoChat() {
         </div>
       </div>
 
-      <div ref={videoContainerRef}>
-        <video ref={localVideoRef} autoPlay muted />
+      <div ref={videoContainerRef} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px" }}>
+        <video ref={localVideoRef} autoPlay muted style={{ width: "100%", borderRadius: "10px" }} />
       </div>
     </div>
   );
