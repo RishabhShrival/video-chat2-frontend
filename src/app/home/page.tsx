@@ -54,14 +54,17 @@ export default function VideoChat() {
       peersRef.current[from].signal(signal);
     });
 
-    socket.on("user-list", (userList: string[]) => {
-      setUsers(userList.filter((id) => id !== socket.id)); // Save other users in room
-      userList.forEach((id) => {
-        if (id !== socket.id && !peersRef.current[id]) {
-          startCall(id);
-        }
+    socket.on("all-users", (userList: string[]) => {
+      console.log("Existing users in room:", userList);
+      userList.forEach((userId) => {
+        startCall(userId); // Only the joining user initiates call
       });
     });
+
+    socket.on("user-list", (userList: string[]) => {
+      setUsers(userList.filter((id) => id !== socket.id));
+    });
+
 
     socket.on("room-id", (roomId: string) => {
       setRoomId(roomId);
