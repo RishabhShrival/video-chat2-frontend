@@ -95,6 +95,7 @@ export default function VideoChat() {
   };
 
   const startCall = (peerId: string) => {
+    console.log("Starting call with peer:", peerId);
     const peer = createPeer(true, peerId);
     peersRef.current[peerId] = peer;
   };
