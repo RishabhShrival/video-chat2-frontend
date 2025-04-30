@@ -1,3 +1,4 @@
+// app/videochat/page.tsx or wherever your main page lives
 "use client";
 
 import { useEffect, useRef, useState } from "react";
@@ -5,18 +6,20 @@ import { io } from "socket.io-client";
 import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-peer";
 import { useRouter } from "next/navigation";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
+import VideoPlayer from "../components/VideoPlayer" // Adjust the import path as necessary
 
-const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL, { autoConnect: true });
+const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 
 export default function VideoChat() {
   const router = useRouter();
   const [users, setUsers] = useState<string[]>([]);
   const [myId, setMyId] = useState<string | null>(null);
   const [username, setUsername] = useState<string | null>(null);
-  const [roomId, setRoomId] = useState<string>(""); // Track room creation/joining
+  const [roomId, setRoomId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
+  const [remoteStreams, setRemoteStreams] = useState<{ peerId: string; stream: MediaStream }[]>([]);
+
   const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const videoContainerRef = useRef<HTMLDivElement | null>(null);
   const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({});
   const localStreamRef = useRef<MediaStream | null>(null);
 
@@ -55,16 +58,14 @@ export default function VideoChat() {
     });
 
     socket.on("all-users", (userList: string[]) => {
-      console.log("Existing users in room:", userList);
       userList.forEach((userId) => {
-        startCall(userId); // Only the joining user initiates call
+        startCall(userId);
       });
     });
 
     socket.on("user-list", (userList: string[]) => {
       setUsers(userList.filter((id) => id !== socket.id));
     });
-
 
     socket.on("room-id", (roomId: string) => {
       setRoomId(roomId);
@@ -75,17 +76,13 @@ export default function VideoChat() {
     });
 
     socket.on("user-left", (peerId: string) => {
-      console.log(`User left: ${peerId}`);
       if (peersRef.current[peerId]) {
         peersRef.current[peerId].destroy();
         delete peersRef.current[peerId];
       }
-      const videoEl = document.getElementById(peerId);
-      if (videoEl) {
-        videoEl.remove();
-      }
+      setRemoteStreams((prev) => prev.filter((entry) => entry.peerId !== peerId));
+      setUsers((prev) => prev.filter((id) => id !== peerId));
     });
-
 
     return () => {
       socket.off("connect");
@@ -105,52 +102,23 @@ export default function VideoChat() {
     });
 
     peer.on("stream", (remoteStream: MediaStream) => {
-      addRemoteStream(peerId, remoteStream);
+      setRemoteStreams((prev) => {
+        if (prev.some((entry) => entry.peerId === peerId)) return prev;
+        return [...prev, { peerId, stream: remoteStream }];
+      });
     });
 
     peer.on("close", () => {
-    console.log(`Peer ${peerId} disconnected`);
-    const videoEl = document.getElementById(peerId);
-    if (videoEl) {
-      videoEl.remove();
-    }
-    delete peersRef.current[peerId];
-  });
+      setRemoteStreams((prev) => prev.filter((entry) => entry.peerId !== peerId));
+      delete peersRef.current[peerId];
+    });
 
     return peer;
   };
 
-  const cleanupCall = () => {
-  localStreamRef.current?.getTracks().forEach((track) => track.stop());
-
-  Object.keys(peersRef.current).forEach((peerId) => {
-    peersRef.current[peerId].destroy();
-    const videoEl = document.getElementById(peerId);
-    if (videoEl) {
-      videoEl.remove();
-    }
-  });
-
-  peersRef.current = {};
-  setUsers([]);
-  setRoomId("");
-};
-
-
   const startCall = (peerId: string) => {
-    console.log("Starting call with peer:", peerId);
     const peer = createPeer(true, peerId);
     peersRef.current[peerId] = peer;
-  };
-
-  const addRemoteStream = (peerId: string, stream: MediaStream) => {
-    if (!document.getElementById(peerId) && videoContainerRef.current) {
-      const remoteVideo = document.createElement("video");
-      remoteVideo.id = peerId;
-      remoteVideo.srcObject = stream;
-      remoteVideo.autoplay = true;
-      videoContainerRef.current.appendChild(remoteVideo);
-    }
   };
 
   const handleCreateRoom = () => {
@@ -165,6 +133,17 @@ export default function VideoChat() {
     } else {
       setError("Please enter a room ID to join.");
     }
+  };
+
+  const cleanupCall = () => {
+    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+
+    Object.values(peersRef.current).forEach((peer) => peer.destroy());
+    peersRef.current = {};
+
+    setRemoteStreams([]);
+    setUsers([]);
+    setRoomId("");
   };
 
   return (
@@ -195,8 +174,18 @@ export default function VideoChat() {
         </div>
       </div>
 
-      <div ref={videoContainerRef} style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))", gap: "10px" }}>
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
+        gap: "10px"
+      }}>
+        {/* Local video */}
         <video ref={localVideoRef} autoPlay muted style={{ width: "100%", borderRadius: "10px" }} />
+
+        {/* Remote videos */}
+        {remoteStreams.map(({ peerId, stream }) => (
+          <VideoPlayer key={peerId} stream={stream} />
+        ))}
       </div>
     </div>
   );
