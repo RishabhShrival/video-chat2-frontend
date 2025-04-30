@@ -74,12 +74,26 @@ export default function VideoChat() {
       setError(message);
     });
 
+    socket.on("user-left", (peerId: string) => {
+      console.log(`User left: ${peerId}`);
+      if (peersRef.current[peerId]) {
+        peersRef.current[peerId].destroy();
+        delete peersRef.current[peerId];
+      }
+      const videoEl = document.getElementById(peerId);
+      if (videoEl) {
+        videoEl.remove();
+      }
+    });
+
+
     return () => {
       socket.off("connect");
       socket.off("signal");
       socket.off("user-list");
       socket.off("room-id");
       socket.off("error");
+      socket.off("user-left");
     };
   }, []);
 
@@ -94,8 +108,34 @@ export default function VideoChat() {
       addRemoteStream(peerId, remoteStream);
     });
 
+    peer.on("close", () => {
+    console.log(`Peer ${peerId} disconnected`);
+    const videoEl = document.getElementById(peerId);
+    if (videoEl) {
+      videoEl.remove();
+    }
+    delete peersRef.current[peerId];
+  });
+
     return peer;
   };
+
+  const cleanupCall = () => {
+  localStreamRef.current?.getTracks().forEach((track) => track.stop());
+
+  Object.keys(peersRef.current).forEach((peerId) => {
+    peersRef.current[peerId].destroy();
+    const videoEl = document.getElementById(peerId);
+    if (videoEl) {
+      videoEl.remove();
+    }
+  });
+
+  peersRef.current = {};
+  setUsers([]);
+  setRoomId("");
+};
+
 
   const startCall = (peerId: string) => {
     console.log("Starting call with peer:", peerId);
@@ -147,6 +187,11 @@ export default function VideoChat() {
             onChange={(e) => setRoomId(e.target.value)}
           />
           <button onClick={handleJoinRoom}>Join Room</button>
+          {roomId && (
+            <div style={{ marginTop: "10px" }}>
+              <button onClick={cleanupCall}>Leave Room</button>
+            </div>
+          )}
         </div>
       </div>
 
