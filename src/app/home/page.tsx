@@ -23,6 +23,48 @@ export default function VideoChat() {
   const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({});
   const localStreamRef = useRef<MediaStream | null>(null);
 
+  const qualitySettings = {
+    low: { width: 320, height: 240, frameRate: 10 },
+    medium: { width: 640, height: 480, frameRate: 20 },
+    high: { width: 1280, height: 720, frameRate: 30 },
+  };
+
+  const getRTCPeerConnection = (peer: SimplePeerInstance): RTCPeerConnection | null => {
+    return (peer as any)._pc ?? null;
+  };
+
+  const monitorStats = () => {
+    setInterval(() => {
+      Object.entries(peersRef.current).forEach(([peerId, peer]) => {
+        const pc = getRTCPeerConnection(peer);
+        if (!pc) return;
+
+        pc.getStats(null).then((stats) => {
+          let sendBitrate = 0;
+          let recvBitrate = 0;
+
+          stats.forEach((report) => {
+            if (report.type === "outbound-rtp" && report.kind === "video") {
+              sendBitrate = report.bitrateMean || 0;
+            }
+            if (report.type === "inbound-rtp" && report.kind === "video") {
+              recvBitrate = report.bitrateMean || 0;
+            }
+          });
+
+          const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
+
+          let quality: keyof typeof qualitySettings = "low";
+          if (minBitrateKbps > 1500) quality = "high";
+          else if (minBitrateKbps > 700) quality = "medium";
+
+          // TODO: Adapt stream quality using replaceTrack() if supported
+          console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
+        });
+      });
+    }, 1000);
+  };
+
   useEffect(() => {
     const auth = getAuth();
     onAuthStateChanged(auth, (user) => {
@@ -40,6 +82,7 @@ export default function VideoChat() {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
+        monitorStats();
       })
       .catch((err) => console.error("Media access error:", err));
 
