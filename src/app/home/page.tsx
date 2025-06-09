@@ -175,6 +175,15 @@ export default function VideoChat() {
       socket.emit("signal", { to: peerId, signal: data });
     });
 
+    // For compatibility with newer WebRTC, listen for 'track' event
+    peer.on("track", (track, stream) => {
+      setRemoteStreams((prev) => {
+        if (prev.some((entry) => entry.peerId === peerId)) return prev;
+        return [...prev, { peerId, stream }];
+      });
+    });
+
+    // Keep 'stream' event for backward compatibility
     peer.on("stream", (remoteStream: MediaStream) => {
       setRemoteStreams((prev) => {
         if (prev.some((entry) => entry.peerId === peerId)) return prev;
