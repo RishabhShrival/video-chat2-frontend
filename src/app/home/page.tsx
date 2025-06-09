@@ -11,59 +11,65 @@ import VideoPlayer from "../components/VideoPlayer" // Adjust the import path as
 const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 
 export default function VideoChat() {
-  const router = useRouter();
-  const [users, setUsers] = useState<string[]>([]);
-  const [myId, setMyId] = useState<string | null>(null);
-  const [username, setUsername] = useState<string | null>(null);
-  const [roomId, setRoomId] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  const [remoteStreams, setRemoteStreams] = useState<{ peerId: string; stream: MediaStream }[]>([]);
-
-  const localVideoRef = useRef<HTMLVideoElement | null>(null);
-  const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({});
-  const localStreamRef = useRef<MediaStream | null>(null);
-
+  const router = useRouter(); //for page change
+  const [users, setUsers] = useState<string[]>([]);  //usernames of connected peers 
+  const [myId, setMyId] = useState<string | null>(null); //current user Id
+  const [username, setUsername] = useState<string | null>(null);  //current user name
+  const [roomId, setRoomId] = useState<string>(""); //current room Id
+  const [error, setError] = useState<string | null>(null);  //error message if any
+  const [remoteStreams, setRemoteStreams] = useState<{ peerId: string; stream: MediaStream }[]>([]);  //remote video streams from other users
+  const localVideoRef = useRef<HTMLVideoElement | null>(null);  //reference to local video element
+  const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({}); //reference to all connected peers
+  // This will hold the SimplePeer instances for each connected user
+  const localStreamRef = useRef<MediaStream | null>(null); // reference to local media stream
+  const [cameraOn, setCameraOn] = useState(true);
+  const [micOn, setMicOn] = useState(true);
   const qualitySettings = {
     low: { width: 320, height: 240, frameRate: 10 },
     medium: { width: 640, height: 480, frameRate: 20 },
     high: { width: 1280, height: 720, frameRate: 30 },
-  };
+  }; // Define quality settings for video streams
+  const statsIntervalRef = useRef<NodeJS.Timeout | null>(null); // Reference to the stats monitoring interval
+  const [peerQualities, setPeerQualities] = useState<{ [peerId: string]: keyof typeof qualitySettings }>({}); // Track the quality of each peer's stream
 
   const getRTCPeerConnection = (peer: SimplePeerInstance): RTCPeerConnection | null => {
     return (peer as any)._pc ?? null;
-  };
+  }; // Get the underlying RTCPeerConnection for network statistics
 
-  const monitorStats = () => {
-    setInterval(() => {
-      Object.entries(peersRef.current).forEach(([peerId, peer]) => {
-        const pc = getRTCPeerConnection(peer);
-        if (!pc) return;
+  const monitorStats = (onQualityUpdate: (peerId: string, quality: keyof typeof qualitySettings) => void) => {
+    if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+  statsIntervalRef.current = setInterval(() => {
+    Object.entries(peersRef.current).forEach(([peerId, peer]) => {
+      const pc = getRTCPeerConnection(peer);
+      if (!pc) return;
 
-        pc.getStats(null).then((stats) => {
-          let sendBitrate = 0;
-          let recvBitrate = 0;
+      pc.getStats(null).then((stats) => {
+        let sendBitrate = 0;
+        let recvBitrate = 0;
 
-          stats.forEach((report) => {
-            if (report.type === "outbound-rtp" && report.kind === "video") {
-              sendBitrate = report.bitrateMean || 0;
-            }
-            if (report.type === "inbound-rtp" && report.kind === "video") {
-              recvBitrate = report.bitrateMean || 0;
-            }
-          });
-
-          const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
-
-          let quality: keyof typeof qualitySettings = "low";
-          if (minBitrateKbps > 1500) quality = "high";
-          else if (minBitrateKbps > 700) quality = "medium";
-
-          // TODO: Adapt stream quality using replaceTrack() if supported
-          console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
+        stats.forEach((report) => {
+          if (report.type === "outbound-rtp" && report.kind === "video") {
+            sendBitrate = report.bitrateMean || 0;
+          }
+          if (report.type === "inbound-rtp" && report.kind === "video") {
+            recvBitrate = report.bitrateMean || 0;
+          }
         });
+
+        const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
+
+        let quality: keyof typeof qualitySettings = "low";
+        if (minBitrateKbps > 1500) quality = "high";
+        else if (minBitrateKbps > 700) quality = "medium";
+
+        if (onQualityUpdate) onQualityUpdate(peerId, quality);
+
+        // TODO: Adapt stream quality using replaceTrack() if supported
+        console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
       });
-    }, 1000);
-  };
+    });
+  }, 5000);
+  }; //check network statistics every 5 seconds using getStats()
 
   useEffect(() => {
     const auth = getAuth();
@@ -82,7 +88,16 @@ export default function VideoChat() {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
-        monitorStats();
+        monitorStats((peerId, quality) => {
+          setPeerQualities(prev => {
+            // Only update if the quality actually changed
+            if (prev[peerId] !== quality) {
+              const peer = peersRef.current[peerId];
+              if (peer) updatePeerVideoTrack(peer, quality);
+            }
+            return { ...prev, [peerId]: quality };
+          });
+        });
       })
       .catch((err) => console.error("Media access error:", err));
 
@@ -127,7 +142,9 @@ export default function VideoChat() {
       setUsers((prev) => prev.filter((id) => id !== peerId));
     });
 
+    // Proper cleanup for monitorStats and socket events
     return () => {
+      if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
       socket.off("connect");
       socket.off("signal");
       socket.off("user-list");
@@ -179,7 +196,7 @@ export default function VideoChat() {
   };
 
   const cleanupCall = () => {
-    localStreamRef.current?.getTracks().forEach((track) => track.stop());
+    //localStreamRef.current?.getTracks().forEach((track) => track.stop());
 
     Object.values(peersRef.current).forEach((peer) => peer.destroy());
     peersRef.current = {};
@@ -188,6 +205,53 @@ export default function VideoChat() {
     setUsers([]);
     setRoomId("");
   };
+
+  const updatePeerVideoTrack = async (peer: SimplePeerInstance, quality: keyof typeof qualitySettings) => {
+    const pc = getRTCPeerConnection(peer);
+    if (!pc) return;
+    const constraints = { video: qualitySettings[quality], audio: true };
+    try {
+      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
+      const newVideoTrack = newStream.getVideoTracks()[0];
+      if (!newVideoTrack) return;
+      // Replace the track in the local stream ref (for local preview)
+      const oldStream = localStreamRef.current;
+      if (oldStream) {
+        const oldVideoTrack = oldStream.getVideoTracks()[0];
+        if (oldVideoTrack) oldStream.removeTrack(oldVideoTrack);
+        // Prevent duplicate tracks
+        if (!oldStream.getVideoTracks().some(track => track.id === newVideoTrack.id)) {
+          oldStream.addTrack(newVideoTrack);
+        }
+        if (localVideoRef.current) localVideoRef.current.srcObject = oldStream;
+      }
+      // Replace the track for the peer connection
+      const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
+      if (sender) await sender.replaceTrack(newVideoTrack);
+    } catch (err) {
+      console.error("Failed to update video track:", err);
+    }
+  };
+
+const toggleCamera = () => {
+  const stream = localStreamRef.current;
+  if (stream) {
+    stream.getVideoTracks().forEach(track => {
+      track.enabled = !cameraOn;
+    });
+    setCameraOn(prev => !prev);
+  }
+};
+
+const toggleMic = () => {
+  const stream = localStreamRef.current;
+  if (stream) {
+    stream.getAudioTracks().forEach(track => {
+      track.enabled = !micOn;
+    });
+    setMicOn(prev => !prev);
+  }
+};
 
   return (
     <div>
@@ -214,6 +278,16 @@ export default function VideoChat() {
               <button onClick={cleanupCall}>Leave Room</button>
             </div>
           )}
+        </div>
+
+        {/* Toggle Camera and Mic Buttons */}
+        <div style={{ marginTop: "10px" }}>
+          <button onClick={toggleCamera}>
+            {cameraOn ? "Turn Camera Off" : "Turn Camera On"}
+          </button>
+          <button onClick={toggleMic} style={{ marginLeft: "10px" }}>
+            {micOn ? "Mute Mic" : "Unmute Mic"}
+          </button>
         </div>
       </div>
 
