@@ -1,7 +1,7 @@
 // app/videochat/page.tsx or wherever your main page lives
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { use, useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-peer";
 import { useRouter } from "next/navigation";
@@ -153,6 +153,20 @@ export default function VideoChat() {
       socket.off("user-left");
     };
   }, []);
+
+  useEffect(() => {
+    if (username) {
+      RegisterUsername(username);
+    }
+  }, [username]);
+
+  const RegisterUsername = (username: string) => {
+    if(username) socket.emit("register-username", username);
+    else{
+      console.warn("Username is empty, using default 'Unknown User'");
+      socket.emit("register-username", "Unknown User");
+    }
+  };
 
   const createPeer = (initiator: boolean, peerId: string) => {
     const peer = new SimplePeer({ initiator, stream: localStreamRef.current ?? undefined, trickle: false });
