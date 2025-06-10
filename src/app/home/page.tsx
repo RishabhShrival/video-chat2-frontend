@@ -30,47 +30,6 @@ export default function VideoChat() {
     medium: { width: 640, height: 480, frameRate: 20 },
     high: { width: 1280, height: 720, frameRate: 30 },
   }; // Define quality settings for video streams
-  const statsIntervalRef = useRef<NodeJS.Timeout | null>(null); // Reference to the stats monitoring interval
-  // Comment out monitorStats and peerQualities, but keep them for future use
-
-  // const [peerQualities, setPeerQualities] = useState<{ [peerId: string]: keyof typeof qualitySettings }>({}); // Track the quality of each peer's stream
-
-  // const monitorStats = (onQualityUpdate: (peerId: string, quality: keyof typeof qualitySettings) => void) => {
-  //   if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
-  //   statsIntervalRef.current = setInterval(() => {
-  //     Object.entries(peersRef.current).forEach(([peerId, peer]) => {
-  //       const pc = getRTCPeerConnection(peer);
-  //       if (!pc) return;
-
-  //       pc.getStats(null).then((stats) => {
-  //         let sendBitrate = 0;
-  //         let recvBitrate = 0;
-
-  //         stats.forEach((report) => {
-  //           if (report.type === "outbound-rtp" && report.kind === "video") {
-  //             sendBitrate = report.bitrateMean || 0;
-  //           }
-  //           if (report.type === "inbound-rtp" && report.kind === "video") {
-  //             recvBitrate = report.bitrateMean || 0;
-  //           }
-  //         });
-
-  //         const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
-
-  //         let quality: keyof typeof qualitySettings = "low";
-  //         if (minBitrateKbps > 1500) quality = "high";
-  //         else if (minBitrateKbps > 700) quality = "medium";
-
-  //         if (onQualityUpdate) onQualityUpdate(peerId, quality);
-
-  //         // updatePeerVideoTrack(peer, quality).catch((err) => {
-  //         //   console.error(`Failed to update video track for peer ${peerId}:`, err);});
-  //         console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
-  //       });
-  //     });
-  //   }, 5000);
-  // }; //check network statistics every 5 seconds using getStats()
-
 
   useEffect(() => {
     if (username) {
@@ -89,7 +48,7 @@ export default function VideoChat() {
     });
     // Always use medium quality for video
     navigator.mediaDevices
-      .getUserMedia({ video: qualitySettings.medium, audio: true })
+      .getUserMedia({ video: qualitySettings.low, audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) {
@@ -114,9 +73,6 @@ export default function VideoChat() {
 
 
     socket.on("user-list", (userList: { id: string; username: string }[]) => {
-      // monitorStats((peerId, quality) => {
-      //   setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
-      // });
       userList.forEach((user) => {
         // Don't start a call to yourself or to already connected users
         if (
@@ -178,6 +134,8 @@ export default function VideoChat() {
         console.log("Remote streams after join (track):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      console.log("Remote stream received:", stream);
+      console.log("Tracks:", stream.getTracks());
     });
 
     // Keep 'stream' event for backward compatibility
@@ -188,6 +146,8 @@ export default function VideoChat() {
         console.log("Remote streams after join (stream):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      console.log("Remote stream received:", remoteStream);
+      console.log("Tracks:", remoteStream.getTracks());
     });
 
     peer.on("close", () => {
