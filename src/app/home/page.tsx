@@ -118,11 +118,11 @@ export default function VideoChat() {
       });
     });
 
-    socket.on("user-list", (userList: string[]) => {
+    socket.on("user-list", (userList: { id: string; username: string }[]) => {
       // monitorStats((peerId, quality) => {
       //   setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
       // });
-      setUsers(userList.filter((id) => id !== socket.id));
+      setUsers(userList.filter((user) => user.id !== (socket.id ?? "")).map((user) => user.username));
     });
 
     socket.on("room-id", (roomId: string) => {
@@ -138,7 +138,11 @@ export default function VideoChat() {
         peersRef.current[peerId].destroy();
         delete peersRef.current[peerId];
       }
-      setRemoteStreams((prev) => prev.filter((entry) => entry.peerId !== peerId));
+      setRemoteStreams((prev) => {
+        const updated = prev.filter((entry) => entry.peerId !== peerId);
+        console.log("Remote streams after leave:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
+        return updated;
+      });
       setUsers((prev) => prev.filter((id) => id !== peerId));
     });
 
@@ -166,7 +170,9 @@ export default function VideoChat() {
     peer.on("track", (track, stream) => {
       setRemoteStreams((prev) => {
         if (prev.some((entry) => entry.peerId === peerId)) return prev;
-        return [...prev, { peerId, stream }];
+        const updated = [...prev, { peerId, stream }];
+        console.log("Remote streams after join (track):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
+        return updated;
       });
     });
 
@@ -174,12 +180,18 @@ export default function VideoChat() {
     peer.on("stream", (remoteStream: MediaStream) => {
       setRemoteStreams((prev) => {
         if (prev.some((entry) => entry.peerId === peerId)) return prev;
-        return [...prev, { peerId, stream: remoteStream }];
+        const updated = [...prev, { peerId, stream: remoteStream }];
+        console.log("Remote streams after join (stream):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
+        return updated;
       });
     });
 
     peer.on("close", () => {
-      setRemoteStreams((prev) => prev.filter((entry) => entry.peerId !== peerId));
+      setRemoteStreams((prev) => {
+        const updated = prev.filter((entry) => entry.peerId !== peerId);
+        console.log("Remote streams after peer close:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
+        return updated;
+      });
       delete peersRef.current[peerId];
     });
 
