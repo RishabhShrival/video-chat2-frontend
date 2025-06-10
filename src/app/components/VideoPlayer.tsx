@@ -16,5 +16,5 @@ export default function VideoPlayer({ stream }: Props) {
     }
   }, [stream]);
 
-  return <video ref={videoRef} autoPlay style={{ width: "100%", borderRadius: "10px" }} />;
+  return <video ref={videoRef} autoPlay playsInline style={{ width: "100%", borderRadius: "10px" }} />;
 }

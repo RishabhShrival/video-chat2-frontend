@@ -7,6 +7,7 @@ import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-p
 import { useRouter } from "next/navigation";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import VideoPlayer from "../components/VideoPlayer" // Adjust the import path as necessary
+import { auth } from "../firebaseConfig";
 
 const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 
@@ -30,47 +31,52 @@ export default function VideoChat() {
     high: { width: 1280, height: 720, frameRate: 30 },
   }; // Define quality settings for video streams
   const statsIntervalRef = useRef<NodeJS.Timeout | null>(null); // Reference to the stats monitoring interval
-  const [peerQualities, setPeerQualities] = useState<{ [peerId: string]: keyof typeof qualitySettings }>({}); // Track the quality of each peer's stream
+  // Comment out monitorStats and peerQualities, but keep them for future use
 
-  const getRTCPeerConnection = (peer: SimplePeerInstance): RTCPeerConnection | null => {
-    return (peer as any)._pc ?? null;
-  }; // Get the underlying RTCPeerConnection for network statistics
+  // const [peerQualities, setPeerQualities] = useState<{ [peerId: string]: keyof typeof qualitySettings }>({}); // Track the quality of each peer's stream
 
-  const monitorStats = (onQualityUpdate: (peerId: string, quality: keyof typeof qualitySettings) => void) => {
-    if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
-  statsIntervalRef.current = setInterval(() => {
-    Object.entries(peersRef.current).forEach(([peerId, peer]) => {
-      const pc = getRTCPeerConnection(peer);
-      if (!pc) return;
+  // const monitorStats = (onQualityUpdate: (peerId: string, quality: keyof typeof qualitySettings) => void) => {
+  //   if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
+  //   statsIntervalRef.current = setInterval(() => {
+  //     Object.entries(peersRef.current).forEach(([peerId, peer]) => {
+  //       const pc = getRTCPeerConnection(peer);
+  //       if (!pc) return;
 
-      pc.getStats(null).then((stats) => {
-        let sendBitrate = 0;
-        let recvBitrate = 0;
+  //       pc.getStats(null).then((stats) => {
+  //         let sendBitrate = 0;
+  //         let recvBitrate = 0;
 
-        stats.forEach((report) => {
-          if (report.type === "outbound-rtp" && report.kind === "video") {
-            sendBitrate = report.bitrateMean || 0;
-          }
-          if (report.type === "inbound-rtp" && report.kind === "video") {
-            recvBitrate = report.bitrateMean || 0;
-          }
-        });
+  //         stats.forEach((report) => {
+  //           if (report.type === "outbound-rtp" && report.kind === "video") {
+  //             sendBitrate = report.bitrateMean || 0;
+  //           }
+  //           if (report.type === "inbound-rtp" && report.kind === "video") {
+  //             recvBitrate = report.bitrateMean || 0;
+  //           }
+  //         });
 
-        const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
+  //         const minBitrateKbps = Math.floor(Math.min(sendBitrate, recvBitrate) / 1000);
 
-        let quality: keyof typeof qualitySettings = "low";
-        if (minBitrateKbps > 1500) quality = "high";
-        else if (minBitrateKbps > 700) quality = "medium";
+  //         let quality: keyof typeof qualitySettings = "low";
+  //         if (minBitrateKbps > 1500) quality = "high";
+  //         else if (minBitrateKbps > 700) quality = "medium";
 
-        if (onQualityUpdate) onQualityUpdate(peerId, quality);
+  //         if (onQualityUpdate) onQualityUpdate(peerId, quality);
 
-        // updatePeerVideoTrack(peer, quality).catch((err) => {
-        //   console.error(`Failed to update video track for peer ${peerId}:`, err);});
-        console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
-      });
-    });
-  }, 5000);
-  }; //check network statistics every 5 seconds using getStats()
+  //         // updatePeerVideoTrack(peer, quality).catch((err) => {
+  //         //   console.error(`Failed to update video track for peer ${peerId}:`, err);});
+  //         console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
+  //       });
+  //     });
+  //   }, 5000);
+  // }; //check network statistics every 5 seconds using getStats()
+
+
+  useEffect(() => {
+    if (username) {
+      socket.emit("register-username", username);
+    }
+  }, [username]); // Register the username with the server when it changes
 
   useEffect(() => {
     const auth = getAuth();
@@ -81,8 +87,9 @@ export default function VideoChat() {
         router.push("/");
       }
     });
+    // Always use medium quality for video
     navigator.mediaDevices
-      .getUserMedia({ video: true, audio: true })
+      .getUserMedia({ video: qualitySettings.medium, audio: true })
       .then((stream) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) {
@@ -96,10 +103,6 @@ export default function VideoChat() {
         setMyId(socket.id);
       }
     });
-
-    if (username) {
-      socket.emit("register-username", username);
-    }
 
     socket.on("signal", ({ from, signal }: { from: string; signal: SignalData }) => {
       if (!peersRef.current[from]) {
@@ -116,9 +119,9 @@ export default function VideoChat() {
     });
 
     socket.on("user-list", (userList: string[]) => {
-      monitorStats((peerId, quality) => {
-        setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
-      });
+      // monitorStats((peerId, quality) => {
+      //   setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
+      // });
       setUsers(userList.filter((id) => id !== socket.id));
     });
 
@@ -159,13 +162,13 @@ export default function VideoChat() {
       socket.emit("signal", { to: peerId, signal: data });
     });
 
-    // // For compatibility with newer WebRTC, listen for 'track' event
-    // peer.on("track", (track, stream) => {
-    //   setRemoteStreams((prev) => {
-    //     if (prev.some((entry) => entry.peerId === peerId)) return prev;
-    //     return [...prev, { peerId, stream }];
-    //   });
-    // });
+    // For compatibility with newer WebRTC, listen for 'track' event
+    peer.on("track", (track, stream) => {
+      setRemoteStreams((prev) => {
+        if (prev.some((entry) => entry.peerId === peerId)) return prev;
+        return [...prev, { peerId, stream }];
+      });
+    });
 
     // Keep 'stream' event for backward compatibility
     peer.on("stream", (remoteStream: MediaStream) => {
@@ -204,7 +207,7 @@ export default function VideoChat() {
 
   const cleanupCall = () => {
     //localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    socket.emit("disconnect");
+    socket.emit("LeaveRoom", roomId);
     Object.values(peersRef.current).forEach((peer) => peer.destroy());
     peersRef.current = {};
 
@@ -213,32 +216,6 @@ export default function VideoChat() {
     setRoomId("");
   };
 
-  const updatePeerVideoTrack = async (peer: SimplePeerInstance, quality: keyof typeof qualitySettings) => {
-    const pc = getRTCPeerConnection(peer);
-    if (!pc) return;
-    const constraints = { video: qualitySettings[quality], audio: true };
-    try {
-      const newStream = await navigator.mediaDevices.getUserMedia(constraints);
-      const newVideoTrack = newStream.getVideoTracks()[0];
-      if (!newVideoTrack) return;
-      // Replace the track in the local stream ref (for local preview)
-      const oldStream = localStreamRef.current;
-      if (oldStream) {
-        const oldVideoTrack = oldStream.getVideoTracks()[0];
-        if (oldVideoTrack) oldStream.removeTrack(oldVideoTrack);
-        // Prevent duplicate tracks
-        if (!oldStream.getVideoTracks().some(track => track.id === newVideoTrack.id)) {
-          oldStream.addTrack(newVideoTrack);
-        }
-        if (localVideoRef.current) localVideoRef.current.srcObject = oldStream;
-      }
-      // Replace the track for the peer connection
-      const sender = pc.getSenders().find(s => s.track && s.track.kind === "video");
-      if (sender) await sender.replaceTrack(newVideoTrack);
-    } catch (err) {
-      console.error("Failed to update video track:", err);
-    }
-  };
 
 const toggleCamera = () => {
   const stream = localStreamRef.current;
