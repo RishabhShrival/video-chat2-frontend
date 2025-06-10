@@ -64,8 +64,8 @@ export default function VideoChat() {
 
         if (onQualityUpdate) onQualityUpdate(peerId, quality);
 
-        updatePeerVideoTrack(peer, quality).catch((err) => {
-          console.error(`Failed to update video track for peer ${peerId}:`, err);});
+        // updatePeerVideoTrack(peer, quality).catch((err) => {
+        //   console.error(`Failed to update video track for peer ${peerId}:`, err);});
         console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
       });
     });
@@ -94,11 +94,12 @@ export default function VideoChat() {
     socket.on("connect", () => {
       if (socket.id) {
         setMyId(socket.id);
-        if (username) {
-          socket.emit("register-username", username);
-        }
       }
     });
+
+    if (username) {
+      socket.emit("register-username", username);
+    }
 
     socket.on("signal", ({ from, signal }: { from: string; signal: SignalData }) => {
       if (!peersRef.current[from]) {
@@ -203,7 +204,7 @@ export default function VideoChat() {
 
   const cleanupCall = () => {
     //localStreamRef.current?.getTracks().forEach((track) => track.stop());
-
+    socket.emit("disconnect");
     Object.values(peersRef.current).forEach((peer) => peer.destroy());
     peersRef.current = {};
 
