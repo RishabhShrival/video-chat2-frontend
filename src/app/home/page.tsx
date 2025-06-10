@@ -112,16 +112,20 @@ export default function VideoChat() {
       peersRef.current[from].signal(signal);
     });
 
-    socket.on("all-users", (userList: string[]) => {
-      userList.forEach((userId) => {
-        startCall(userId);
-      });
-    });
 
     socket.on("user-list", (userList: { id: string; username: string }[]) => {
       // monitorStats((peerId, quality) => {
       //   setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
       // });
+      userList.forEach((user) => {
+        // Don't start a call to yourself or to already connected users
+        if (
+          user.id !== socket.id && // not yourself
+          !peersRef.current[user.id] // not already connected
+        ) {
+          startCall(user.id);
+        }
+      });
       setUsers(userList.filter((user) => user.id !== (socket.id ?? "")).map((user) => user.username));
     });
 
