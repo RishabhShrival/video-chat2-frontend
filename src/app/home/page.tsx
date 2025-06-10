@@ -64,7 +64,8 @@ export default function VideoChat() {
 
         if (onQualityUpdate) onQualityUpdate(peerId, quality);
 
-        // TODO: Adapt stream quality using replaceTrack() if supported
+        updatePeerVideoTrack(peer, quality).catch((err) => {
+          console.error(`Failed to update video track for peer ${peerId}:`, err);});
         console.log(`Peer ${peerId} min bitrate: ${minBitrateKbps} kbps → ${quality}`);
       });
     });
@@ -80,7 +81,6 @@ export default function VideoChat() {
         router.push("/");
       }
     });
-
     navigator.mediaDevices
       .getUserMedia({ video: true, audio: true })
       .then((stream) => {
@@ -88,22 +88,15 @@ export default function VideoChat() {
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
-        monitorStats((peerId, quality) => {
-          setPeerQualities(prev => {
-            // Only update if the quality actually changed
-            if (prev[peerId] !== quality) {
-              const peer = peersRef.current[peerId];
-              if (peer) updatePeerVideoTrack(peer, quality);
-            }
-            return { ...prev, [peerId]: quality };
-          });
-        });
       })
       .catch((err) => console.error("Media access error:", err));
 
     socket.on("connect", () => {
       if (socket.id) {
         setMyId(socket.id);
+        if (username) {
+          socket.emit("register-username", username);
+        }
       }
     });
 
@@ -122,6 +115,9 @@ export default function VideoChat() {
     });
 
     socket.on("user-list", (userList: string[]) => {
+      monitorStats((peerId, quality) => {
+        setPeerQualities((prev) => ({ ...prev, [peerId]: quality }));
+      });
       setUsers(userList.filter((id) => id !== socket.id));
     });
 
@@ -144,7 +140,6 @@ export default function VideoChat() {
 
     // Proper cleanup for monitorStats and socket events
     return () => {
-      if (statsIntervalRef.current) clearInterval(statsIntervalRef.current);
       socket.off("connect");
       socket.off("signal");
       socket.off("user-list");
@@ -154,34 +149,22 @@ export default function VideoChat() {
     };
   }, []);
 
-  useEffect(() => {
-    if (username) {
-      RegisterUsername(username);
-    }
-  }, [username]);
-
-  const RegisterUsername = (username: string) => {
-    if(username) socket.emit("register-username", username);
-    else{
-      console.warn("Username is empty, using default 'Unknown User'");
-      socket.emit("register-username", "Unknown User");
-    }
-  };
 
   const createPeer = (initiator: boolean, peerId: string) => {
     const peer = new SimplePeer({ initiator, stream: localStreamRef.current ?? undefined, trickle: false });
+    console.log(`Creating peer ${initiator ? "initiator" : "receiver"} for ${peerId}`);
 
     peer.on("signal", (data: SignalData) => {
       socket.emit("signal", { to: peerId, signal: data });
     });
 
-    // For compatibility with newer WebRTC, listen for 'track' event
-    peer.on("track", (track, stream) => {
-      setRemoteStreams((prev) => {
-        if (prev.some((entry) => entry.peerId === peerId)) return prev;
-        return [...prev, { peerId, stream }];
-      });
-    });
+    // // For compatibility with newer WebRTC, listen for 'track' event
+    // peer.on("track", (track, stream) => {
+    //   setRemoteStreams((prev) => {
+    //     if (prev.some((entry) => entry.peerId === peerId)) return prev;
+    //     return [...prev, { peerId, stream }];
+    //   });
+    // });
 
     // Keep 'stream' event for backward compatibility
     peer.on("stream", (remoteStream: MediaStream) => {
