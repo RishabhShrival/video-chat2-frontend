@@ -7,21 +7,20 @@ import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-p
 import { useRouter } from "next/navigation";
 import { getAuth, onAuthStateChanged } from "firebase/auth";
 import VideoPlayer from "../components/VideoPlayer" // Adjust the import path as necessary
-import { auth } from "../firebaseConfig";
+
+
 
 const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 
 export default function VideoChat() {
-  const router = useRouter(); //for page change
-  const [users, setUsers] = useState<string[]>([]);  //usernames of connected peers 
-  const [myId, setMyId] = useState<string | null>(null); //current user Id
-  const [username, setUsername] = useState<string | null>(null);  //current user name
+  const router = useRouter(); //for page change 
+  const users = useRef< { id: string; username: string }[]>([]); //list of users id and usernames
+  const [username, setUsername] = useState<string | null>(null); //current user username
   const [roomId, setRoomId] = useState<string>(""); //current room Id
   const [error, setError] = useState<string | null>(null);  //error message if any
   const [remoteStreams, setRemoteStreams] = useState<{ peerId: string; stream: MediaStream }[]>([]);  //remote video streams from other users
   const localVideoRef = useRef<HTMLVideoElement | null>(null);  //reference to local video element
   const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({}); //reference to all connected peers
-  // This will hold the SimplePeer instances for each connected user
   const localStreamRef = useRef<MediaStream | null>(null); // reference to local media stream
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
@@ -37,7 +36,24 @@ export default function VideoChat() {
     }
   }, [username]); // Register the username with the server when it changes
 
+  // get local video stream
+  const getLocalStream = ()=> {
+    navigator.mediaDevices.getUserMedia({ video: qualitySettings.medium, audio: true })
+      .then((stream) => {
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+      })
+      .catch((err) => console.error("Media access error:", err));
+  }
+
   useEffect(() => {
+
+    // get media stream 
+    getLocalStream();
+
+    //get username and auth
     const auth = getAuth();
     onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -46,44 +62,47 @@ export default function VideoChat() {
         router.push("/");
       }
     });
-    // Always use medium quality for video
-    navigator.mediaDevices
-      .getUserMedia({ video: qualitySettings.low, audio: true })
-      .then((stream) => {
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-      })
-      .catch((err) => console.error("Media access error:", err));
-
+    
+    // socket event listeners (by default)
     socket.on("connect", () => {
-      if (socket.id) {
-        setMyId(socket.id);
-      }
+      console.log("Connected to server with ID:", socket.id);
+  
     });
 
+    // Handle incoming signaling data from other peers (by default, can't be removed or altered)
     socket.on("signal", ({ from, signal }: { from: string; signal: SignalData }) => {
-      if (!peersRef.current[from]) {
-        const peer = createPeer(false, from);
-        peersRef.current[from] = peer;
-      }
       peersRef.current[from].signal(signal);
     });
 
 
-    socket.on("user-list", (userList: { id: string; username: string }[]) => {
-      userList.forEach((user) => {
-        // Don't start a call to yourself or to already connected users
-        if (
-          user.id !== socket.id && // not yourself
-          !peersRef.current[user.id] // not already connected
-        ) {
-          startCall(user.id);
+    // socket listen room-id when room is created
+    socket.on("room-id", (roomId: string) => {
+      setRoomId(roomId);
+    });
+
+    // Handle when a new user joins the room
+    socket.on("user-joined", ({ id, username }: { id: string; username: string }) => {
+      console.log(`User joined: ${username} (${id})`);
+      startCall(id,false);
+      users.current.push({ id, username });
+    });
+
+    // Handle when the user joins a room
+    socket.on("room-joined", ({ roomId, users: joinedUsers }: { roomId: string; users: { id: string; username: string }[] }) => {
+      console.log(`Joined room: ${roomId}`);
+      joinedUsers.forEach(user => {
+        if (user.id !== socket.id) {
+          users.current.push(user);
+          startCall(user.id, true);
         }
       });
-      setUsers(userList.filter((user) => user.id !== (socket.id ?? "")).map((user) => user.username));
     });
+
+    socket.on("user-list", (userList: { id: string; username: string }[]) => {
+      //start calls to all users which are not has peerRef
+      users.current = userList;
+
+  });
 
     socket.on("room-id", (roomId: string) => {
       setRoomId(roomId);
@@ -97,23 +116,26 @@ export default function VideoChat() {
       if (peersRef.current[peerId]) {
         peersRef.current[peerId].destroy();
         delete peersRef.current[peerId];
+        users.current = users.current.filter((user) => user.id !== peerId);
+        console.log(`User left: ${peerId}`);
       }
       setRemoteStreams((prev) => {
         const updated = prev.filter((entry) => entry.peerId !== peerId);
         console.log("Remote streams after leave:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
-      setUsers((prev) => prev.filter((id) => id !== peerId));
     });
 
     // Proper cleanup for monitorStats and socket events
     return () => {
       socket.off("connect");
       socket.off("signal");
+      socket.off("user-joined");
+      socket.off("room-joined");
       socket.off("user-list");
       socket.off("room-id");
       socket.off("error");
-      socket.off("user-left");
+      socket.off("user-left");  
     };
   }, []);
 
@@ -124,18 +146,6 @@ export default function VideoChat() {
 
     peer.on("signal", (data: SignalData) => {
       socket.emit("signal", { to: peerId, signal: data });
-    });
-
-    // For compatibility with newer WebRTC, listen for 'track' event
-    peer.on("track", (track, stream) => {
-      setRemoteStreams((prev) => {
-        if (prev.some((entry) => entry.peerId === peerId)) return prev;
-        const updated = [...prev, { peerId, stream }];
-        console.log("Remote streams after join (track):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
-        return updated;
-      });
-      console.log("Remote stream received:", stream);
-      console.log("Tracks:", stream.getTracks());
     });
 
     // Keep 'stream' event for backward compatibility
@@ -157,13 +167,20 @@ export default function VideoChat() {
         return updated;
       });
       delete peersRef.current[peerId];
+      users.current = users.current.filter((user) => user.id !== peerId);
     });
 
     return peer;
   };
 
-  const startCall = (peerId: string) => {
-    const peer = createPeer(true, peerId);
+  const startCall = (peerId: string, initiator: boolean) => {
+    if (!localStreamRef.current){
+      console.error("Local stream not ready, cannot start call.");
+      getLocalStream();
+      return;
+    } // Don't start if local stream not ready
+    if (peerId === socket.id || peersRef.current[peerId]) return;
+    const peer = createPeer(initiator, peerId);
     peersRef.current[peerId] = peer;
   };
 
@@ -182,36 +199,36 @@ export default function VideoChat() {
   };
 
   const cleanupCall = () => {
-    //localStreamRef.current?.getTracks().forEach((track) => track.stop());
-    socket.emit("LeaveRoom", roomId);
+    //do not remove local stream
+    socket.emit("leave-room", roomId);
     Object.values(peersRef.current).forEach((peer) => peer.destroy());
     peersRef.current = {};
 
     setRemoteStreams([]);
-    setUsers([]);
+    users.current = [];
     setRoomId("");
   };
 
 
-const toggleCamera = () => {
-  const stream = localStreamRef.current;
-  if (stream) {
-    stream.getVideoTracks().forEach(track => {
-      track.enabled = !cameraOn;
-    });
-    setCameraOn(prev => !prev);
-  }
-};
+// const toggleCamera = () => {
+//   const stream = localStreamRef.current;
+//   if (stream) {
+//     stream.getVideoTracks().forEach(track => {
+//       track.enabled = !cameraOn;
+//     });
+//     setCameraOn(prev => !prev);
+//   }
+// };
 
-const toggleMic = () => {
-  const stream = localStreamRef.current;
-  if (stream) {
-    stream.getAudioTracks().forEach(track => {
-      track.enabled = !micOn;
-    });
-    setMicOn(prev => !prev);
-  }
-};
+// const toggleMic = () => {
+//   const stream = localStreamRef.current;
+//   if (stream) {
+//     stream.getAudioTracks().forEach(track => {
+//       track.enabled = !micOn;
+//     });
+//     setMicOn(prev => !prev);
+//   }
+// };
 
   return (
     <div>
@@ -240,7 +257,7 @@ const toggleMic = () => {
           )}
         </div>
 
-        {/* Toggle Camera and Mic Buttons */}
+        {/* Toggle Camera and Mic Buttons
         <div style={{ marginTop: "10px" }}>
           <button onClick={toggleCamera}>
             {cameraOn ? "Turn Camera Off" : "Turn Camera On"}
@@ -248,7 +265,7 @@ const toggleMic = () => {
           <button onClick={toggleMic} style={{ marginLeft: "10px" }}>
             {micOn ? "Mute Mic" : "Unmute Mic"}
           </button>
-        </div>
+        </div> */}
       </div>
 
       <div style={{
@@ -267,3 +284,24 @@ const toggleMic = () => {
     </div>
   );
 }
+
+
+//types of emit events
+// 1. "connection" - When a new user connects (by default)
+// 2. "register-username" (username) - Register a username for the socket
+// 3. "create-room" - Create a new room
+// 4. "join-room" (roomId) - Join an existing room
+// 5. "disconnect" - When a user disconnects (by default)
+// 6. "leave-room" (roomId) - Leave a room
+// 7. "signal" ({ to, signal }) - Relay signaling data for peer connection
+// 8. "user-list" (roomId) - Get the list of users in a room
+
+
+//types of listen events
+// 1. "room-id" (roomId)- Create a new room
+// 2. "signal" ({ to, signal }) - Relay signaling data for peer connection
+// 3. "user-joined" ({ id, username }) - Notify users in the room when a new user joins
+// 4. "room-joined" ({ roomId, users[{id:,username:}] }) - Notify the user who joined about the room and its users
+// 5. "user-left" (socketId) - Notify users in the room when a user leaves
+// 6. "error" (message) - Send error messages to the user
+// 7. "user-list" (userList) - Send the list of users in a room to the requesting user
