@@ -14,7 +14,8 @@ const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 
 export default function VideoChat() {
   const router = useRouter(); //for page change 
-  const users = useRef< { id: string; username: string }[]>([]); //list of users id and usernames
+  // CHANGE: useState instead of useRef for users
+  const [users, setUsers] = useState<{ id: string; username: string }[]>([]);
   const [username, setUsername] = useState<string | null>(null); //current user username
   const [roomId, setRoomId] = useState<string>(""); //current room Id
   const [error, setError] = useState<string | null>(null);  //error message if any
@@ -37,15 +38,21 @@ export default function VideoChat() {
   }, [username]); // Register the username with the server when it changes
 
   // get local video stream
-  const getLocalStream = ()=> {
-    navigator.mediaDevices.getUserMedia({ video: qualitySettings.medium, audio: true })
+  const getLocalStream = (
+    constraints: MediaStreamConstraints = { video: qualitySettings.medium, audio: true }
+  ) => {
+    return navigator.mediaDevices.getUserMedia(constraints)
       .then((stream) => {
         localStreamRef.current = stream;
         if (localVideoRef.current) {
           localVideoRef.current.srcObject = stream;
         }
+        return stream;
       })
-      .catch((err) => console.error("Media access error:", err));
+      .catch((err) => {
+        console.error("Media access error:", err);
+        throw err;
+      });
   }
 
   useEffect(() => {
@@ -71,7 +78,9 @@ export default function VideoChat() {
 
     // Handle incoming signaling data from other peers (by default, can't be removed or altered)
     socket.on("signal", ({ from, signal }: { from: string; signal: SignalData }) => {
-      peersRef.current[from].signal(signal);
+      if (peersRef.current[from]) {
+        peersRef.current[from].signal(signal);
+      }
     });
 
 
@@ -83,26 +92,25 @@ export default function VideoChat() {
     // Handle when a new user joins the room
     socket.on("user-joined", ({ id, username }: { id: string; username: string }) => {
       console.log(`User joined: ${username} (${id})`);
-      startCall(id,false);
-      users.current.push({ id, username });
+      startCall(id, false);
+      setUsers(prev => prev.some(u => u.id === id) ? prev : [...prev, { id, username }]);
+      //handleUserList(); // Refresh user list after someone joins
     });
 
     // Handle when the user joins a room
     socket.on("room-joined", ({ roomId, users: joinedUsers }: { roomId: string; users: { id: string; username: string }[] }) => {
       console.log(`Joined room: ${roomId}`);
+      setUsers(joinedUsers);
       joinedUsers.forEach(user => {
         if (user.id !== socket.id) {
-          users.current.push(user);
           startCall(user.id, true);
         }
       });
     });
 
     socket.on("user-list", (userList: { id: string; username: string }[]) => {
-      //start calls to all users which are not has peerRef
-      users.current = userList;
-
-  });
+      setUsers(userList);
+    });
 
     socket.on("room-id", (roomId: string) => {
       setRoomId(roomId);
@@ -116,7 +124,7 @@ export default function VideoChat() {
       if (peersRef.current[peerId]) {
         peersRef.current[peerId].destroy();
         delete peersRef.current[peerId];
-        users.current = users.current.filter((user) => user.id !== peerId);
+        setUsers(prev => prev.filter((user) => user.id !== peerId));
         console.log(`User left: ${peerId}`);
       }
       setRemoteStreams((prev) => {
@@ -124,6 +132,7 @@ export default function VideoChat() {
         console.log("Remote streams after leave:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      handleUserList(); // Refresh user list after someone leaves
     });
 
     // Proper cleanup for monitorStats and socket events
@@ -167,7 +176,11 @@ export default function VideoChat() {
         return updated;
       });
       delete peersRef.current[peerId];
-      users.current = users.current.filter((user) => user.id !== peerId);
+      setUsers(prev => prev.filter((user) => user.id !== peerId));
+    });
+
+    peer.on("error", (err) => {
+      console.error(`Peer error (${peerId}):`, err);
     });
 
     return peer;
@@ -198,6 +211,14 @@ export default function VideoChat() {
     }
   };
 
+  const handleUserList = () => {
+    if (roomId.trim()){
+      socket.emit("user-list", roomId.trim());
+      setError(null);
+    }
+  };
+
+  //leave room and cleanup
   const cleanupCall = () => {
     //do not remove local stream
     socket.emit("leave-room", roomId);
@@ -205,30 +226,57 @@ export default function VideoChat() {
     peersRef.current = {};
 
     setRemoteStreams([]);
-    users.current = [];
+    setUsers([]); // <-- update here
     setRoomId("");
   };
 
 
-// const toggleCamera = () => {
-//   const stream = localStreamRef.current;
-//   if (stream) {
-//     stream.getVideoTracks().forEach(track => {
-//       track.enabled = !cameraOn;
-//     });
-//     setCameraOn(prev => !prev);
-//   }
-// };
+  const toggleCamera = () => {
+    const stream = localStreamRef.current;
+    if (stream) {
+      const videoTracks = stream.getVideoTracks();
+      if (cameraOn) {
+        videoTracks.forEach(track => {
+          track.stop();
+          stream.removeTrack(track);
+        });
+      } else {
+        getLocalStream({ video: qualitySettings.medium, audio: false })
+          .then(newStream => {
+            const newVideoTrack = newStream.getVideoTracks()[0];
+            stream.addTrack(newVideoTrack);
+            if (localVideoRef.current) {
+              localVideoRef.current.srcObject = stream;
+            }
+          });
+      }
+      setCameraOn(prev => !prev);
+    }
+  };
 
-// const toggleMic = () => {
-//   const stream = localStreamRef.current;
-//   if (stream) {
-//     stream.getAudioTracks().forEach(track => {
-//       track.enabled = !micOn;
-//     });
-//     setMicOn(prev => !prev);
-//   }
-// };
+  const toggleMic = () => {
+    const stream = localStreamRef.current;
+    if (stream) {
+      const audioTracks = stream.getAudioTracks();
+      if (micOn) {
+        // Stop and remove all audio tracks to free the mic hardware
+        audioTracks.forEach(track => {
+          track.stop();
+          stream.removeTrack(track);
+        });
+      } else {
+        // Re-acquire audio and add to stream
+        getLocalStream({ video: false, audio: true })
+          .then(newStream => {
+            const newAudioTrack = newStream.getAudioTracks()[0];
+            if (newAudioTrack) {
+              stream.addTrack(newAudioTrack);
+            }
+          });
+      }
+      setMicOn(prev => !prev);
+    }
+  };
 
   return (
     <div>
@@ -257,7 +305,7 @@ export default function VideoChat() {
           )}
         </div>
 
-        {/* Toggle Camera and Mic Buttons
+        Toggle Camera and Mic Buttons
         <div style={{ marginTop: "10px" }}>
           <button onClick={toggleCamera}>
             {cameraOn ? "Turn Camera Off" : "Turn Camera On"}
@@ -265,7 +313,7 @@ export default function VideoChat() {
           <button onClick={toggleMic} style={{ marginLeft: "10px" }}>
             {micOn ? "Mute Mic" : "Unmute Mic"}
           </button>
-        </div> */}
+        </div>
       </div>
 
       <div style={{
