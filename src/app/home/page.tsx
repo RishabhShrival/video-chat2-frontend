@@ -38,22 +38,21 @@ export default function VideoChat() {
   }, [username]); // Register the username with the server when it changes
 
   // get local video stream
-  const getLocalStream = (
+  const getLocalStream = async (
     constraints: MediaStreamConstraints = { video: qualitySettings.medium, audio: true }
   ) => {
-    return navigator.mediaDevices.getUserMedia(constraints)
-      .then((stream) => {
-        localStreamRef.current = stream;
-        if (localVideoRef.current) {
-          localVideoRef.current.srcObject = stream;
-        }
-        return stream;
-      })
-      .catch((err) => {
-        console.error("Media access error:", err);
-        throw err;
-      });
-  }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      localStreamRef.current = stream;
+      if (localVideoRef.current) {
+        localVideoRef.current.srcObject = stream;
+      }
+      return stream;
+    } catch (err) {
+      console.error("Media access error:", err);
+      throw err;
+    }
+  };
 
   useEffect(() => {
 
