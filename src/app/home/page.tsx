@@ -25,6 +25,10 @@ export default function VideoChat() {
   const localStreamRef = useRef<MediaStream | null>(null); // reference to local media stream
   const [cameraOn, setCameraOn] = useState(true);
   const [micOn, setMicOn] = useState(true);
+  const [cameraBusy, setCameraBusy] = useState(false);
+  const [micBusy, setMicBusy] = useState(false);
+  const [remoteMediaStatus, setRemoteMediaStatus] = useState<{ [id: string]: { camera: boolean; mic: boolean } }>({
+  });
   const qualitySettings = {
     low: { width: 320, height: 240, frameRate: 10 },
     medium: { width: 640, height: 480, frameRate: 20 },
@@ -39,13 +43,16 @@ export default function VideoChat() {
 
   // get local video stream
   const getLocalStream = async (
-    constraints: MediaStreamConstraints = { video: qualitySettings.medium, audio: true }
+    constraints: MediaStreamConstraints = { video: qualitySettings.medium, audio: true },
+    updateRef: boolean = true // add this flag
   ) => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
+      if (updateRef) {
+        localStreamRef.current = stream;
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
       }
       return stream;
     } catch (err) {
@@ -134,6 +141,16 @@ export default function VideoChat() {
       handleUserList(); // Refresh user list after someone leaves
     });
 
+    socket.on(
+      "camera-mic-status",
+      ({ id, camera, mic }: { id: string; camera: boolean; mic: boolean }) => {
+        setRemoteMediaStatus(prev => ({
+          ...prev,
+          [id]: { camera, mic }
+        }));
+      }
+    );
+
     // Proper cleanup for monitorStats and socket events
     return () => {
       socket.off("connect");
@@ -144,6 +161,7 @@ export default function VideoChat() {
       socket.off("room-id");
       socket.off("error");
       socket.off("user-left");  
+      socket.off("camera-mic-status");
     };
   }, []);
 
@@ -230,51 +248,94 @@ export default function VideoChat() {
   };
 
 
-  const toggleCamera = () => {
+  const toggleCamera = async () => {
+    if (cameraBusy) return;
+    setCameraBusy(true);
+
     const stream = localStreamRef.current;
     if (stream) {
       const videoTracks = stream.getVideoTracks();
       if (cameraOn) {
         videoTracks.forEach(track => {
+          // Remove from all peers
+          Object.values(peersRef.current).forEach(peer => {
+            peer.removeTrack(track, stream);
+          });
           track.stop();
           stream.removeTrack(track);
         });
       } else {
-        getLocalStream({ video: qualitySettings.medium, audio: false })
-          .then(newStream => {
-            const newVideoTrack = newStream.getVideoTracks()[0];
+        try {
+          const newStream = await getLocalStream({ video: qualitySettings.medium, audio: false }, false); // updateRef: false
+          const newVideoTrack = newStream.getVideoTracks()[0];
+          if (newVideoTrack) {
             stream.addTrack(newVideoTrack);
-            if (localVideoRef.current) {
-              localVideoRef.current.srcObject = stream;
-            }
-          });
+            Object.values(peersRef.current).forEach(peer => {
+              const sender = (peer as any)._pc.getSenders().find(
+                (s: RTCRtpSender) => s.track && s.track.kind === "video"
+              );
+              if (sender) {
+                sender.replaceTrack(newVideoTrack);
+              } else {
+                peer.addTrack(newVideoTrack, stream);
+              }
+            });
+          }
+        } catch (err) {
+          setError("Could not access camera.");
+        }
       }
       setCameraOn(prev => !prev);
+      // Notify others about camera status
+      socket.emit("camera-mic-status", {
+        roomId,
+        id: socket.id,
+        camera: !cameraOn,
+        mic: micOn
+      });
     }
+    setTimeout(() => setCameraBusy(false), 1000); // 1s cooldown
   };
 
-  const toggleMic = () => {
+  const toggleMic = async () => {
+    if (micBusy) return;
+    setMicBusy(true);
+  
     const stream = localStreamRef.current;
     if (stream) {
       const audioTracks = stream.getAudioTracks();
       if (micOn) {
-        // Stop and remove all audio tracks to free the mic hardware
         audioTracks.forEach(track => {
+          Object.values(peersRef.current).forEach(peer => {
+            peer.removeTrack(track, stream);
+          });
           track.stop();
           stream.removeTrack(track);
         });
       } else {
-        // Re-acquire audio and add to stream
-        getLocalStream({ video: false, audio: true })
-          .then(newStream => {
-            const newAudioTrack = newStream.getAudioTracks()[0];
-            if (newAudioTrack) {
-              stream.addTrack(newAudioTrack);
-            }
-          });
+        try {
+          // Do NOT update localStreamRef or local video element here!
+          const newStream = await getLocalStream({ video: false, audio: true }, false);
+          const newAudioTrack = newStream.getAudioTracks()[0];
+          if (newAudioTrack) {
+            stream.addTrack(newAudioTrack);
+            Object.values(peersRef.current).forEach(peer => {
+              peer.addTrack(newAudioTrack, stream);
+            });
+          }
+        } catch (err) {
+          setError("Could not access microphone.");
+        }
       }
       setMicOn(prev => !prev);
+      socket.emit("camera-mic-status", {
+        roomId,
+        id: socket.id,
+        camera: cameraOn,
+        mic: !micOn
+      });
     }
+    setTimeout(() => setMicBusy(false), 1000);
   };
 
   return (
@@ -304,12 +365,12 @@ export default function VideoChat() {
           )}
         </div>
 
-        Toggle Camera and Mic Buttons
+        {/* Toggle Camera and Mic Buttons */}
         <div style={{ marginTop: "10px" }}>
-          <button onClick={toggleCamera}>
+          <button onClick={toggleCamera} disabled={cameraBusy}>
             {cameraOn ? "Turn Camera Off" : "Turn Camera On"}
           </button>
-          <button onClick={toggleMic} style={{ marginLeft: "10px" }}>
+          <button onClick={toggleMic} style={{ marginLeft: "10px" }} disabled={micBusy}>
             {micOn ? "Mute Mic" : "Unmute Mic"}
           </button>
         </div>
@@ -325,7 +386,13 @@ export default function VideoChat() {
 
         {/* Remote videos */}
         {remoteStreams.map(({ peerId, stream }) => (
-          <VideoPlayer key={peerId} stream={stream} />
+          <VideoPlayer
+            key={peerId}
+            stream={stream}
+            cameraOn={remoteMediaStatus[peerId]?.camera !== false}
+            micOn={remoteMediaStatus[peerId]?.mic !== false}
+            username={users.find(u => u.id === peerId)?.username}
+          />
         ))}
       </div>
     </div>
@@ -342,7 +409,7 @@ export default function VideoChat() {
 // 6. "leave-room" (roomId) - Leave a room
 // 7. "signal" ({ to, signal }) - Relay signaling data for peer connection
 // 8. "user-list" (roomId) - Get the list of users in a room
-
+// 9. "camera-mic-status" ({roomId, camera, mic}) - Update camera and mic status for users in a room
 
 //types of listen events
 // 1. "room-id" (roomId)- Create a new room
@@ -352,3 +419,4 @@ export default function VideoChat() {
 // 5. "user-left" (socketId) - Notify users in the room when a user leaves
 // 6. "error" (message) - Send error messages to the user
 // 7. "user-list" (userList) - Send the list of users in a room to the requesting user
+// 8. "camera-mic-status" ({ id, camera, mic }) - Broadcast camera and mic status to all users in the room
