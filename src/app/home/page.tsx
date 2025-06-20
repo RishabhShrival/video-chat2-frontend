@@ -7,8 +7,8 @@ import micIconOn from '../images/icons/microphoneOn.png';
 import micIconOff from '../images/icons/microphoneOff.png';
 import leaveIcon from '../images/icons/leave.png';
 import '../globals.css'; // Ensure global styles are imported
-import { useEffect, useRef, useState } from "react";
-import {io} from "socket.io-client";
+import { use, useEffect, useRef, useState } from "react";
+import  io  from "socket.io-client";
 import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-peer";
 import { useRouter } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
