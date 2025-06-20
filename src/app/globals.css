@@ -1,0 +1,24 @@
+@import "tailwindcss";
+
+
+:root {
+    /* color palette */
+    --columbia-blue: #d6eeffff;
+    --chefchaouen-blue: #4991eeff;
+    --veronica: #a13ddbff;
+    --persian-indigo: #2a0962ff;
+    --oxford-blue: #090925ff;
+
+    /* Add a default foreground color for light mode */
+}
+
+
+body{
+    background-color: var(--columbia-blue);
+
+    @media (prefers-color-scheme: dark) {
+        background-color: var(--oxford-blue); 
+    }
+}
+
+

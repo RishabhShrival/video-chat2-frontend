@@ -1,12 +1,21 @@
 // app/videochat/page.tsx or wherever your main page lives
 "use client";
 
-import { use, useEffect, useRef, useState } from "react";
-import { io } from "socket.io-client";
+import CamIconOn from '../images/icons/cameraOn.png';
+import CamIconOff from '../images/icons/cameraOff.png';
+import micIconOn from '../images/icons/microphoneOn.png';
+import micIconOff from '../images/icons/microphoneOff.png';
+import leaveIcon from '../images/icons/leave.png';
+import '../globals.css'; // Ensure global styles are imported
+import { useEffect, useRef, useState } from "react";
+import io from "socket.io-client";
 import SimplePeer, { Instance as SimplePeerInstance, SignalData } from "simple-peer";
 import { useRouter } from "next/navigation";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import VideoPlayer from "../components/VideoPlayer" // Adjust the import path as necessary
+import { onAuthStateChanged } from "firebase/auth";
+import {auth} from '../firebaseConfig';
+import VideoPlayer from "../components/VideoPlayer" // remote video player component necessary
+import LocalVideoPlayer from "../components/localVideoPlayer"; // local video player component
+import RemoteStreamLayout from '../components/remoteStreamLayout';
 
 
 
@@ -15,6 +24,7 @@ const socket = io(process.env.NEXT_PUBLIC_BACKEND_URL!, { autoConnect: true });
 export default function VideoChat() {
   const router = useRouter(); //for page change 
   // CHANGE: useState instead of useRef for users
+  const [inCall, setInCall] = useState(false);
   const [users, setUsers] = useState<{ id: string; username: string }[]>([]);
   const [username, setUsername] = useState<string | null>(null); //current user username
   const [roomId, setRoomId] = useState<string>(""); //current room Id
@@ -23,10 +33,10 @@ export default function VideoChat() {
   const localVideoRef = useRef<HTMLVideoElement | null>(null);  //reference to local video element
   const peersRef = useRef<{ [key: string]: SimplePeerInstance }>({}); //reference to all connected peers
   const localStreamRef = useRef<MediaStream | null>(null); // reference to local media stream
-  const [cameraOn, setCameraOn] = useState(true);
-  const [micOn, setMicOn] = useState(true);
-  const [cameraBusy, setCameraBusy] = useState(false);
-  const [micBusy, setMicBusy] = useState(false);
+  const [cameraOn, setCameraOn] = useState(true);  // local camera status
+  const [micOn, setMicOn] = useState(true); //local mic status
+  const [cameraBusy, setCameraBusy] = useState(false); // toggle state
+  const [micBusy, setMicBusy] = useState(false); //toggle state
   const [remoteMediaStatus, setRemoteMediaStatus] = useState<{ [id: string]: { camera: boolean; mic: boolean } }>({
   });
   const qualitySettings = {
@@ -67,10 +77,17 @@ export default function VideoChat() {
     getLocalStream();
 
     //get username and auth
-    const auth = getAuth();
+    // const auth = getAuth();
     onAuthStateChanged(auth, (user) => {
       if (user) {
-        setUsername(user.email ? user.email.split("@")[0] : null);
+        const username = user.email ? user.email.split("@")[0] : null;
+        setUsername(username);
+
+        const storedRoomId = localStorage.getItem("roomId");
+        if (storedRoomId) {
+          setRoomId(storedRoomId);
+          socket.emit("join-room", storedRoomId);
+        }
       } else {
         router.push("/");
       }
@@ -89,11 +106,6 @@ export default function VideoChat() {
       }
     });
 
-
-    // socket listen room-id when room is created
-    socket.on("room-id", (roomId: string) => {
-      setRoomId(roomId);
-    });
 
     // Handle when a new user joins the room
     socket.on("user-joined", ({ id, username }: { id: string; username: string }) => {
@@ -120,6 +132,8 @@ export default function VideoChat() {
 
     socket.on("room-id", (roomId: string) => {
       setRoomId(roomId);
+      localStorage.setItem("roomId", roomId); // Save it
+      setInCall(true);
     });
 
     socket.on("error", (message: string) => {
@@ -203,28 +217,71 @@ export default function VideoChat() {
     return peer;
   };
 
-  const startCall = (peerId: string, initiator: boolean) => {
-    if (!localStreamRef.current){
-      console.error("Local stream not ready, cannot start call.");
-      getLocalStream();
-      return;
-    } // Don't start if local stream not ready
+  const startCall = async (peerId: string, initiator: boolean) => {
     if (peerId === socket.id || peersRef.current[peerId]) return;
+  
+    let stream = localStreamRef.current;
+    if (!stream) {
+      try {
+        stream = await getLocalStream();
+        localStreamRef.current = stream; // ensure it's updated globally too
+        if (localVideoRef.current) {
+          localVideoRef.current.srcObject = stream;
+        }
+      } catch (err) {
+        console.error("Failed to get local stream for call:", err);
+        return;
+      }
+    }
+  
     const peer = createPeer(initiator, peerId);
     peersRef.current[peerId] = peer;
+    setInCall(true);
   };
+  
 
   const handleCreateRoom = () => {
-    socket.emit("create-room");
-    setError(null);
+    if (!socket.connected) {
+      setError("Socket not connected. Please try again later.");
+      return;
+    }
+  
+    socket.emit("create-room", (response: { success: boolean; roomId?: string; error?: string }) => {
+      if (response.success && response.roomId) {
+        setRoomId(response.roomId);
+        setError(null);
+      } else {
+        setError(response.error || "Failed to create room.");
+      }
+    });
   };
+  
+
 
   const handleJoinRoom = () => {
-    if (roomId.trim()) {
-      socket.emit("join-room", roomId.trim());
-      setError(null);
-    } else {
+    if (!roomId.trim()) {
       setError("Please enter a room ID to join.");
+      return;
+    }
+  
+    if (!socket.connected) {
+      setError("Unable to connect to the server. Please try again later.");
+      return;
+    }
+  
+    try {
+      socket.emit("join-room", roomId.trim(), (response: { success: boolean; error?: string }) => {
+        if (response.success) {
+          localStorage.setItem("roomId", roomId.trim()); // Save it
+          setError(null);
+          setInCall(true);
+        } else {
+          setError(response.error || "Failed to join the room. Please try again.");
+        }
+      });
+    } catch (err) {
+      console.error("Error joining room:", err);
+      setError("An unexpected error occurred. Please try again.");
     }
   };
 
@@ -241,7 +298,9 @@ export default function VideoChat() {
     socket.emit("leave-room", roomId);
     Object.values(peersRef.current).forEach((peer) => peer.destroy());
     peersRef.current = {};
-
+    localStorage.removeItem("roomId");
+    setInCall(false);
+    setError(null);
     setRemoteStreams([]);
     setUsers([]); // <-- update here
     setRoomId("");
@@ -294,7 +353,7 @@ export default function VideoChat() {
         mic: micOn
       });
     }
-    setTimeout(() => setCameraBusy(false), 1000); // 1s cooldown
+    setTimeout(() => setCameraBusy(false), 500); // 1s cooldown
   };
 
   const toggleMic = async () => {
@@ -335,67 +394,102 @@ export default function VideoChat() {
         mic: !micOn
       });
     }
-    setTimeout(() => setMicBusy(false), 1000);
+    setTimeout(() => setMicBusy(false), 500);
   };
 
   return (
-    <div>
-      <h1>Multi-User Video Chat</h1>
-      <h2>Logged in as: {username}</h2>
+    <div className="flex flex-col w-full h-full p-5 bg-gray-900 dark:bg-gray-800">
+    {/* Heading Box */}
+    <div className="flex flex-col p-4 text-2xl items-center justify-center w-full text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md">
+      <div className="font-bold">Start Call</div>
+      <div className="italic">Welcome, {username}</div>
+    </div>
 
-      <div style={{ marginBottom: "20px" }}>
-        {error && <p style={{ color: "red" }}>{error}</p>}
-
-        <div>
-          <button onClick={handleCreateRoom}>Create Room</button>
-        </div>
-
-        <div style={{ marginTop: "10px" }}>
+    {/* Input Box */}
+    {inCall ? null : (
+      <div className="flex flex-col items-center justify-center w-full m-auto p-10 bg-amber-400 bg-opacity-80 rounded-lg shadow-md">
+        <div className="w-full max-w-md">
           <input
             type="text"
             placeholder="Enter Room ID"
             value={roomId}
             onChange={(e) => setRoomId(e.target.value)}
+            className="w-full bg-white text-lg text-gray-800 px-4 py-2 rounded-lg shadow-sm focus:outline-none focus:ring-2 focus:ring-blue-400 transition"
           />
-          <button onClick={handleJoinRoom}>Join Room</button>
-          {roomId && (
-            <div style={{ marginTop: "10px" }}>
-              <button onClick={cleanupCall}>Leave Room</button>
-            </div>
-          )}
+          <button
+            onClick={handleJoinRoom}
+            className="w-full mt-4 bg-blue-500 text-white px-5 py-2 text-lg rounded-lg shadow-md hover:bg-blue-600 active:bg-blue-700 transition-all"
+          >
+            Join Room
+          </button>
         </div>
 
-        {/* Toggle Camera and Mic Buttons */}
-        <div style={{ marginTop: "10px" }}>
-          <button onClick={toggleCamera} disabled={cameraBusy}>
-            {cameraOn ? "Turn Camera Off" : "Turn Camera On"}
-          </button>
-          <button onClick={toggleMic} style={{ marginLeft: "10px" }} disabled={micBusy}>
-            {micOn ? "Mute Mic" : "Unmute Mic"}
+        <div className="my-5 text-gray-700 dark:text-gray-300 font-medium">Or</div>
+
+        <div className="w-full max-w-md">
+          <button
+            onClick={handleCreateRoom}
+            className="w-full bg-green-600 text-white px-5 py-2 text-lg rounded-lg shadow-md hover:bg-green-700 active:bg-green-800 transition-all"
+          >
+            Create Room
           </button>
         </div>
       </div>
+    )}
 
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(300px, 1fr))",
-        gap: "10px"
-      }}>
-        {/* Local video */}
-        <video ref={localVideoRef} autoPlay muted style={{ width: "100%", borderRadius: "10px" }} />
+    {/* Toggle Camera and Mic Buttons */}
+    <div className="flex fixed bottom-0 justify-center w-full z-10 py-4">
+      <button
+        onClick={toggleCamera}
+        disabled={cameraBusy}
+        className="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-md hover:bg-gray-600 active:bg-gray-700 transition-all m-2 disabled:opacity-50"
+      >
+        {cameraOn ? <img src={CamIconOn.src} alt="Camera On" /> : <img src={CamIconOff.src} alt="Camera Off" />}
+      </button>
 
-        {/* Remote videos */}
-        {remoteStreams.map(({ peerId, stream }) => (
-          <VideoPlayer
-            key={peerId}
-            stream={stream}
-            cameraOn={remoteMediaStatus[peerId]?.camera !== false}
-            micOn={remoteMediaStatus[peerId]?.mic !== false}
-            username={users.find(u => u.id === peerId)?.username}
-          />
-        ))}
-      </div>
+      {inCall && (
+        <button
+          onClick={cleanupCall}
+          className="w-16 h-16 rounded-full bg-red-500 text-white flex items-center justify-center shadow-md hover:bg-red-600 active:bg-red-700 transition-all m-2"
+        >
+          <img src={leaveIcon.src} alt="Leave Call" />
+        </button>
+      )}
+
+      {inCall && (
+        <button
+          onClick={toggleMic}
+          disabled={micBusy}
+          className="w-16 h-16 rounded-full bg-gray-500 text-white flex items-center justify-center shadow-md hover:bg-gray-600 active:bg-gray-700 transition-all m-2 disabled:opacity-50"
+        >
+          {micOn ? <img src={micIconOn.src} alt="Mic On" /> : <img src={micIconOff.src} alt="Mic Off" />}
+        </button>
+      )}
     </div>
+
+    {/* Local Video */}
+    <LocalVideoPlayer stream={localStreamRef.current} cameraOn={cameraOn} />
+
+    {/* Remote Videos */}
+    {/* <RemoteStreamLayout remoteStreams={remoteStreams} remoteMediaStatus={remoteMediaStatus} /> */}
+    <div className="flex flex-wrap justify-center gap-4 p-4">
+      {remoteStreams.map(({ peerId, stream }) => (
+        <div key={peerId} className="relative w-1/3 h-64">
+          <VideoPlayer
+            stream={stream}
+            cameraOn={remoteMediaStatus[peerId]?.camera ?? true}
+            micOn={remoteMediaStatus[peerId]?.mic ?? true}
+            username={users.find(user => user.id === peerId)?.username || peerId}
+          />
+        </div>
+      ))}
+      </div>
+
+    {/* Error Box */}
+    <div className="mt-4">
+      {error && <p className="text-red-500 text-center font-medium">{error}</p>}
+    </div>
+  </div>
   );
 }
 
@@ -403,7 +497,7 @@ export default function VideoChat() {
 //types of emit events
 // 1. "connection" - When a new user connects (by default)
 // 2. "register-username" (username) - Register a username for the socket
-// 3. "create-room" - Create a new room
+// 3. "create-room" - Create a new rooms
 // 4. "join-room" (roomId) - Join an existing room
 // 5. "disconnect" - When a user disconnects (by default)
 // 6. "leave-room" (roomId) - Leave a room

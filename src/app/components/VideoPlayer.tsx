@@ -4,7 +4,7 @@
 import React, { useEffect, useRef } from "react";
 
 type Props = {
-  stream: MediaStream;
+  stream: MediaStream | null;
   cameraOn?: boolean;
   micOn?: boolean;
   username?: string;
@@ -20,47 +20,30 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
   }, [stream]);
 
   return (
-    <div style={{ position: "relative" }}>
+    <div>
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        style={{ width: "100%", borderRadius: "10px", background: "#000" }}
+        className="relative w-full h-full overflow-hidden rounded-lg shadow-2xl"
       />
       {!cameraOn && (
         <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            width: "100%",
-            height: "100%",
-            background: "rgba(0,0,0,0.7)",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 24,
-            zIndex: 2,
-            borderRadius: "10px"
-          }}
+          className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-70 text-white flex items-center justify-center text-2xl z-20"
         >
           Camera Off
         </div>
       )}
+      {!micOn && (
+        <div
+          className="absolute bottom-0 left-0 w-full bg-red-600 bg-opacity-70 text-white flex items-center justify-center text-lg z-20"
+        >
+          Mic Off
+        </div>
+      )}
       {username && (
         <div
-          style={{
-            position: "absolute",
-            bottom: 8,
-            left: 8,
-            color: "#fff",
-            background: "rgba(0,0,0,0.5)",
-            padding: "2px 8px",
-            borderRadius: 4,
-            fontSize: 14,
-            zIndex: 3
-          }}
+          className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 rounded px-2 py-1 text-sm"
         >
           {username}
         </div>
@@ -68,3 +51,6 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
     </div>
   );
 }
+
+// components/VideoPlayer.tsx );
+
