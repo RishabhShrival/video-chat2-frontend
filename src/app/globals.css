@@ -8,14 +8,17 @@
     --veronica: #a13ddbff;
     --persian-indigo: #2a0962ff;
     --oxford-blue: #090925ff;
-
+    --neutral-gray: #e0e0e0ff;
+    --error-red: #ff4d4dff;
+    --success-green: #28a745ff;  
+    --warning-yellow: #ffc107ff;
     /* Add a default foreground color for light mode */
 }
 
 
 body{
     background-color: var(--columbia-blue);
-
+    overflow: hidden;
     @media (prefers-color-scheme: dark) {
         background-color: var(--oxford-blue); 
     }

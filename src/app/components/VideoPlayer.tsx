@@ -8,9 +8,10 @@ type Props = {
   cameraOn?: boolean;
   micOn?: boolean;
   username?: string;
+  muted?: boolean;
 };
 
-export default function VideoPlayer({ stream, cameraOn = true, micOn = true, username }: Props) {
+export default function VideoPlayer({ stream, cameraOn = true, micOn = true, username, muted = false }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
@@ -20,16 +21,26 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
   }, [stream]);
 
   return (
-    <div>
+    <div className="rounded-lg aspect-square overflow-hidden m-2 shadow-2xl outline-2 dark:outline-white flex items-center justify-center">
+      <div className="h-full w-full flex items-center justify-center">
       <video
         ref={videoRef}
         autoPlay
         playsInline
-        className="relative w-full h-full overflow-hidden rounded-lg shadow-2xl"
+        muted={muted}
+        className="relative w-full h-full object-cover rounded-lg shadow-2xl"
       />
+      {username && (
+        <div
+          className="absolute inline-block bottom-2 left-2 text-white bg-black bg-opacity-50 rounded px-2 py-1 text-sm"
+        >
+          {username}
+        </div>
+      )}
+      </div>
       {!cameraOn && (
         <div
-          className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-70 text-white flex items-center justify-center text-2xl z-20"
+          className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-70 text-white flex items-center justify-center rounded-lg"
         >
           Camera Off
         </div>
@@ -41,13 +52,7 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
           Mic Off
         </div>
       )}
-      {username && (
-        <div
-          className="absolute bottom-2 left-2 text-white bg-black bg-opacity-50 rounded px-2 py-1 text-sm"
-        >
-          {username}
-        </div>
-      )}
+      
     </div>
   );
 }

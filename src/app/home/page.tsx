@@ -5,6 +5,7 @@ import CamIconOn from '../images/icons/cameraOn.png';
 import CamIconOff from '../images/icons/cameraOff.png';
 import micIconOn from '../images/icons/microphoneOn.png';
 import micIconOff from '../images/icons/microphoneOff.png';
+import logOutIcon from '../images/icons/logOut.png';
 import leaveIcon from '../images/icons/leave.png';
 import '../globals.css'; // Ensure global styles are imported
 import { use, useEffect, useRef, useState } from "react";
@@ -44,6 +45,7 @@ export default function VideoChat() {
     medium: { width: 640, height: 480, frameRate: 20 },
     high: { width: 1280, height: 720, frameRate: 30 },
   }; // Define quality settings for video streams
+  const [usersInCall,setUsersInCall] = useState<number>(0);
 
   useEffect(() => {
     if (username) {
@@ -86,6 +88,7 @@ export default function VideoChat() {
         const storedRoomId = localStorage.getItem("roomId");
         if (storedRoomId) {
           setRoomId(storedRoomId);
+          socket.emit("register-username", username);
           socket.emit("join-room", storedRoomId);
         }
       } else {
@@ -134,6 +137,8 @@ export default function VideoChat() {
       setRoomId(roomId);
       localStorage.setItem("roomId", roomId); // Save it
       setInCall(true);
+      setError(null);
+      setUsersInCall(1);
     });
 
     socket.on("error", (message: string) => {
@@ -152,6 +157,7 @@ export default function VideoChat() {
         console.log("Remote streams after leave:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      setUsersInCall(prev => prev - 1);
       handleUserList(); // Refresh user list after someone leaves
     });
 
@@ -196,8 +202,11 @@ export default function VideoChat() {
         console.log("Remote streams after join (stream):", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      setUsersInCall(prev => prev + 1);
       console.log("Remote stream received:", remoteStream);
       console.log("Tracks:", remoteStream.getTracks());
+      setInCall(true);
+      setError(null);
     });
 
     peer.on("close", () => {
@@ -206,6 +215,7 @@ export default function VideoChat() {
         console.log("Remote streams after peer close:", updated.map(e => ({ peerId: e.peerId, id: e.stream.id })));
         return updated;
       });
+      setUsersInCall(prev => prev - 1);
       delete peersRef.current[peerId];
       setUsers(prev => prev.filter((user) => user.id !== peerId));
     });
@@ -236,7 +246,7 @@ export default function VideoChat() {
   
     const peer = createPeer(initiator, peerId);
     peersRef.current[peerId] = peer;
-    setInCall(true);
+    setError(null);
   };
   
 
@@ -248,7 +258,9 @@ export default function VideoChat() {
   
     socket.emit("create-room", (response: { success: boolean; roomId?: string; error?: string }) => {
       if (response.success && response.roomId) {
+        localStorage.setItem("roomId", response.roomId); // Save it
         setRoomId(response.roomId);
+        setUsersInCall(1);
         setError(null);
       } else {
         setError(response.error || "Failed to create room.");
@@ -301,9 +313,21 @@ export default function VideoChat() {
     localStorage.removeItem("roomId");
     setInCall(false);
     setError(null);
+    setUsersInCall(0);
     setRemoteStreams([]);
     setUsers([]); // <-- update here
     setRoomId("");
+  };
+
+  const LogOut = () => {
+    auth.signOut().then(() => {
+      console.log("User signed out successfully.");
+      cleanupCall(); // Cleanup call on logout
+      router.push("/"); // Redirect to home page
+    }).catch((error) => {
+      console.error("Error signing out:", error);
+      setError("Failed to log out. Please try again.");
+    });
   };
 
 
@@ -398,12 +422,26 @@ export default function VideoChat() {
   };
 
   return (
-    <div className="flex flex-col w-full h-full p-5 bg-gray-900 dark:bg-gray-800">
+    <div className="flex flex-col w-full h-full scroll-off">
+
+    <div className='fixed top-0 right-0 w-fit px-5 py-2 text-gray-800 dark:text-gray-200 m-1 flex items-center'>
+          {username}
+          <button
+            onClick={LogOut}
+            className='ml-3 p-3 rounded-full bg-red-900  hover:bg-red-950 transition-all disabled:opacity-50 disabled:cursor-not-allowed'
+          ><img src={logOutIcon.src} alt='LogOut' className='text-xs'/></button>
+    </div> 
     {/* Heading Box */}
-    <div className="flex flex-col p-4 text-2xl items-center justify-center w-full text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md">
-      <div className="font-bold">Start Call</div>
-      <div className="italic">Welcome, {username}</div>
-    </div>
+    {inCall ? 
+      <div className='flex justify-between items-center'>
+        <div className='w-fit px-5 py-2 text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md m-xs'>
+          RoomId: {roomId}
+        </div> 
+      </div>
+      : <div className="flex flex-col p-4 text-2xl items-center justify-center w-full text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md">
+          <div className="font-bold">Start Call</div>
+          <div className="italic">Welcome, {username}</div>
+        </div>}
 
     {/* Input Box */}
     {inCall ? null : (
@@ -437,7 +475,36 @@ export default function VideoChat() {
       </div>
     )}
 
-    {/* Toggle Camera and Mic Buttons */}
+    
+
+    
+    {/* Remote Videos */}
+    <div className='relative w-full h-full'>
+      <RemoteStreamLayout remoteStreams={remoteStreams} remoteMediaStatus={remoteMediaStatus} userList={users} totalUsers={inCall ? remoteStreams.length : -1} localStream={localStreamRef.current} cameraOn={cameraOn} />
+    </div>
+    {/*<div className="flex flex-wrap justify-center gap-4 p-4">
+      {remoteStreams.map(({ peerId, stream }) => (
+        <div key={peerId} className="relative w-1/3 h-64">
+          <VideoPlayer
+            stream={stream}
+            cameraOn={remoteMediaStatus[peerId]?.camera ?? true}
+            micOn={remoteMediaStatus[peerId]?.mic ?? true}
+            username={users.find(user => user.id === peerId)?.username || peerId}
+          />
+        </div>
+      ))}
+      </div>*/}
+
+
+      {/* Local Video */}
+      
+      <div className='flex w-full h-full p-5'>
+        <LocalVideoPlayer stream={localStreamRef.current} cameraOn={cameraOn} totalUsers={inCall ? remoteStreams.length : -1}/>
+      </div>
+      
+
+
+      {/* Toggle Camera and Mic Buttons */}
     <div className="flex fixed bottom-0 justify-center w-full z-10 py-4">
       <button
         onClick={toggleCamera}
@@ -466,24 +533,6 @@ export default function VideoChat() {
         </button>
       )}
     </div>
-
-    {/* Local Video */}
-    <LocalVideoPlayer stream={localStreamRef.current} cameraOn={cameraOn} />
-
-    {/* Remote Videos */}
-    {/* <RemoteStreamLayout remoteStreams={remoteStreams} remoteMediaStatus={remoteMediaStatus} /> */}
-    <div className="flex flex-wrap justify-center gap-4 p-4">
-      {remoteStreams.map(({ peerId, stream }) => (
-        <div key={peerId} className="relative w-1/3 h-64">
-          <VideoPlayer
-            stream={stream}
-            cameraOn={remoteMediaStatus[peerId]?.camera ?? true}
-            micOn={remoteMediaStatus[peerId]?.mic ?? true}
-            username={users.find(user => user.id === peerId)?.username || peerId}
-          />
-        </div>
-      ))}
-      </div>
 
     {/* Error Box */}
     <div className="mt-4">
