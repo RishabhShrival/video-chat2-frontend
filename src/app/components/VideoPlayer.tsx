@@ -42,16 +42,20 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
       </div>
       {!cameraOn && (
         <div
-          className="absolute bg-black bg-opacity-70 flex items-center justify-center rounded-lg"
+          className="absolute w-full h-full bg-black bg-opacity-70 flex items-center justify-center rounded-lg"
         >
-          <img src={CamIconOff.src} alt="Camera Off" className="w-8 h-8" />
+          <div className="rounded-full bg-white p-2">
+            <img src={CamIconOff.src} alt="Camera Off" className="w-8 h-8" />
+          </div>
         </div>
       )}
       {!micOn && (
         <div
           className="absolute top-0 left-0"
         >
-          <img src={micIconOff.src} alt="Mic Off" className="w-8 h-8" />
+          <div className="rounded-full bg-white p-2">
+            <img src={micIconOff.src} alt="Mic Off" className="w-8 h-8" />
+          </div>
         </div>
       )}
       
