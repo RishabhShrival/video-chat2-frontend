@@ -2,6 +2,8 @@
 "use client";
 
 import React, { useEffect, useRef } from "react";
+import micIconOff from '../images/icons/microphoneOff.png';
+import CamIconOff from '../images/icons/cameraOff.png';
 
 type Props = {
   stream: MediaStream | null;
@@ -40,16 +42,16 @@ export default function VideoPlayer({ stream, cameraOn = true, micOn = true, use
       </div>
       {!cameraOn && (
         <div
-          className="absolute top-0 left-0 w-full h-full bg-black bg-opacity-70 text-white flex items-center justify-center rounded-lg"
+          className="absolute bg-black bg-opacity-70 flex items-center justify-center rounded-lg"
         >
-          Camera Off
+          <img src={CamIconOff.src} alt="Camera Off" className="w-8 h-8" />
         </div>
       )}
       {!micOn && (
         <div
-          className="absolute bottom-0 left-0 w-full bg-red-600 bg-opacity-70 text-white flex items-center justify-center text-lg z-20"
+          className="absolute top-0 left-0"
         >
-          Mic Off
+          <img src={micIconOff.src} alt="Mic Off" className="w-8 h-8" />
         </div>
       )}
       

@@ -295,6 +295,7 @@ export default function VideoChat() {
       console.error("Error joining room:", err);
       setError("An unexpected error occurred. Please try again.");
     }
+    handleUserList(); // Fetch user list after joining room
   };
 
   const handleUserList = () => {
@@ -435,7 +436,7 @@ export default function VideoChat() {
     {inCall ? 
       <div className='flex justify-between items-center'>
         <div className='w-fit px-5 py-2 text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md m-xs'>
-          RoomId: {roomId}
+          RoomId:   {roomId}
         </div> 
       </div>
       : <div className="flex flex-col p-4 text-2xl items-center justify-center w-full text-gray-800 dark:text-gray-200 bg-amber-900 bg-opacity-80 rounded-lg shadow-md">
@@ -505,7 +506,7 @@ export default function VideoChat() {
 
 
       {/* Toggle Camera and Mic Buttons */}
-    <div className="flex fixed bottom-0 justify-center w-full z-10 py-4">
+    <div className="flex fixed bottom-0 justify-center w-full z-50 py-4">
       <button
         onClick={toggleCamera}
         disabled={cameraBusy}
