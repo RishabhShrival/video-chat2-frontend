@@ -41,6 +41,7 @@ export default function LocalVideoPlayer({ stream, cameraOn = true, totalUsers =
             autoPlay
             playsInline
             muted
+            style={{ transform: "scaleX(-1)" }} // Flip horizontally
             className="w-full h-full object-cover rounded-lg bg-black"
           />
         </div>
